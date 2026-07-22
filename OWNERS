@@ -1,0 +1,11 @@
+approvers:
+  - chmouel
+  - zakisk
+  - theakshaypant
+
+reviewers:
+  - chmouel
+  - zakisk
+  - theakshaypant
+
+# vim: ft=yaml

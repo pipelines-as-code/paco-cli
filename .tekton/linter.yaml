@@ -1,0 +1,136 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: linters
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push, pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[*]"
+    pipelinesascode.tekton.dev/max-keep-runs: "2"
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+spec:
+  params:
+    - name: repo_url
+      value: "{{repo_url}}"
+    - name: revision
+      value: "{{revision}}"
+  pipelineSpec:
+    params:
+      - name: repo_url
+      - name: revision
+    tasks:
+      - name: linters
+        taskSpec:
+          workspaces:
+            - name: source
+          steps:
+            - name: fetch-repo
+              displayName: "Fetch Repository"
+              ref:
+                resolver: hub
+                params:
+                  - name: catalog
+                    value: git-clone-stepaction
+                  - name: type
+                    value: artifact
+                  - name: kind
+                    value: stepaction
+                  - name: name
+                    value: git-clone
+                  - name: version
+                    value: "1.7.0"
+              params:
+                - name: output-path
+                  value: $(workspaces.source.path)
+                - name: url
+                  value: "$(params.repo_url)"
+                - name: revision
+                  value: "$(params.revision)"
+                - name: depth
+                  value: 1000
+            - name: commit-validation
+              displayName: "Git commit validation (gitlint + conventional commits)"
+              image: registry.access.redhat.com/ubi9/python-312
+              workingDir: $(workspaces.source.path)
+              script: |
+                set -euxo pipefail
+
+                git config --global user.name "paco-cli"
+                git config --global user.email "pac@tekton.dev"
+                git config --global --add safe.directory $(workspaces.source.path)
+
+                if [[ "{{ headers['X-Github-Event'] }}" != "pull_request" ]]; then
+                  echo "Not a pull request, skipping commit validation"
+                  exit 0
+                fi
+
+                if [[ "{{ body.pull_request.user.login }}" == dependabot* ]]; then
+                  echo "Dependabot PR, skipping commit validation"
+                  exit 0
+                fi
+
+                base_sha="{{ body.pull_request.base.sha }}"
+                if [[ -z "$base_sha" ]]; then
+                  echo "Base SHA is empty, cannot determine commit range"
+                  exit 1
+                fi
+
+                echo "Validating commits between $base_sha and HEAD"
+                pip3 install gitlint
+
+                conv_regexp='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|deps)(\([a-z0-9-]+\))?: .+'
+
+                gitlint_failed=()
+                conventional_failed=()
+
+                while read -r commit_hash; do
+                  if [[ -n "$commit_hash" ]]; then
+                    echo "Validating commit: $commit_hash"
+                    commit_msg=$(git log -1 --pretty=format:%s "$commit_hash")
+                    commit_body=$(git log -1 --pretty=format:%B "$commit_hash")
+
+                    if echo "$commit_msg" | grep -E -q '^Merge branch'; then
+                      echo "  Skipping merge commit: $commit_hash"
+                      continue
+                    fi
+
+                    if echo "$commit_msg" | grep -E -q '^Revert '; then
+                      echo "  Skipping revert commit: $commit_hash"
+                      continue
+                    fi
+
+                    if ! echo "$commit_body" | gitlint --staged; then
+                      echo "  Gitlint failed for commit: $commit_hash"
+                      gitlint_failed+=("$commit_hash")
+                    fi
+
+                    if ! echo "$commit_msg" | grep -E -q "$conv_regexp"; then
+                      echo "  Conventional commit format failed for: $commit_hash"
+                      echo "  Message: $commit_msg"
+                      conventional_failed+=("$commit_hash")
+                    fi
+                  fi
+                done < <(git log --format=%H "$base_sha..HEAD" --)
+
+                errors=0
+                if [[ ${#gitlint_failed[@]} -gt 0 ]]; then
+                  echo "Gitlint failures: ${gitlint_failed[*]}"
+                  errors=1
+                fi
+                if [[ ${#conventional_failed[@]} -gt 0 ]]; then
+                  echo "Conventional commit failures: ${conventional_failed[*]}"
+                  errors=1
+                fi
+                exit $errors
+            - name: codespell
+              displayName: "Spell Checker (codespell)"
+              image: registry.access.redhat.com/ubi9/python-312
+              workingDir: $(workspaces.source.path)
+              script: |
+                pip3 install codespell
+                codespell -d docs/ internal/ cmd/
+    workspaces:
+      - name: source
+  workspaces:
+    - name: source
+      emptyDir: {}

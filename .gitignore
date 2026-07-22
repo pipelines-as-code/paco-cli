@@ -1,0 +1,37 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+
+# Test binary, build with `go test -c`
+*.test
+
+# Coverage
+*.out
+coverage*
+
+# Temporary
+tmp/
+
+# Editor files
+.idea/
+.vscode/
+*~
+\#*
+[._]*.s[a-w][a-z].
+[._]s[a-w][a-z].
+Session.vim
+.netrwhist
+tags
+
+# OS
+.DS_Store
+
+# Credentials (never commit real secrets; test fixtures must use fake values)
+*.pem
+*.key
+credentials.json
+service-account.json

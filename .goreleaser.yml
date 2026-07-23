@@ -1,0 +1,72 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    main: ./cmd/paco
+    binary: paco
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -w
+      - -s
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - name_template: >-
+      {{ .Binary }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+release:
+  prerelease: auto
+  header: |
+    # paco-cli version {{.Tag}}
+
+    paco-cli {{.Tag}} has been released 🥳
+
+    TODO: add high level changelog before setting this as released,
+          describe the notable changes with links to PRs
+
+    ## Installation
+
+    Download the binary for your platform from the assets below:
+
+    ### linux/amd64
+    ```shell
+    curl -L https://github.com/pipelines-as-code/paco-cli/releases/download/{{.Tag}}/paco_{{.Version}}_linux_amd64.tar.gz | tar xz -C /usr/local/bin paco
+    ```
+
+    ### linux/arm64
+    ```shell
+    curl -L https://github.com/pipelines-as-code/paco-cli/releases/download/{{.Tag}}/paco_{{.Version}}_linux_arm64.tar.gz | tar xz -C /usr/local/bin paco
+    ```
+
+    Verify the checksum:
+    ```shell
+    sha256sum --check checksums.txt
+    ```
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/pipelines-as-code/paco-cli/internal/diff"
+	"github.com/pipelines-as-code/paco-cli/internal/review"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +16,7 @@ func Root(version, commit, date string) *cobra.Command {
 
 	cmd.AddCommand(versionCmd(version, commit, date))
 	cmd.AddCommand(diff.Command())
+	cmd.AddCommand(review.Command())
 
 	return cmd
 }

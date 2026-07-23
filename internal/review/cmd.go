@@ -191,7 +191,7 @@ func Run(ctx context.Context, opts Options) error {
 		if len(scrubbedOutput) > 4000 {
 			scrubbedOutput = scrubbedOutput[:4000]
 		}
-		fmt.Printf("--- unparseable opencode output (scrubbed) ---\n%s\n", scrubbedOutput)
+		fmt.Printf("--- unparsable opencode output (scrubbed) ---\n%s\n", scrubbedOutput)
 		return writeFail("Paco: the model returned output that could not be parsed as a review.")
 	}
 

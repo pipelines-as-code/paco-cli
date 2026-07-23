@@ -57,6 +57,7 @@ spec:
                   value: $(workspaces.source.path)/go-build-cache/mod
               workingDir: $(workspaces.source.path)
               script: |
+                #!/usr/bin/env bash
                 set -euxo pipefail
                 make test
             - name: lint-go
@@ -64,6 +65,7 @@ spec:
               image: docker.io/golangci/golangci-lint:v2.1
               workingDir: $(workspaces.source.path)
               script: |
+                #!/usr/bin/env bash
                 set -euxo pipefail
                 make lint-go
             - name: lint-fmt
@@ -71,6 +73,7 @@ spec:
               image: docker.io/golang:1.26
               workingDir: $(workspaces.source.path)
               script: |
+                #!/usr/bin/env bash
                 set -euxo pipefail
                 go install mvdan.cc/gofumpt@latest
                 make lint-fmt
@@ -79,6 +82,7 @@ spec:
               image: docker.io/golang:1.26
               workingDir: $(workspaces.source.path)
               script: |
+                #!/usr/bin/env bash
                 set -euxo pipefail
                 CGO_ENABLED=0 GOARCH=amd64 make build
                 CGO_ENABLED=0 GOARCH=arm64 make build

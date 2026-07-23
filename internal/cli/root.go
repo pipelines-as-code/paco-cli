@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/pipelines-as-code/paco-cli/internal/diff"
 	"github.com/spf13/cobra"
 )
 
@@ -10,11 +11,10 @@ func Root(version, commit, date string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "paco",
 		Short: "Paco AI code reviewer CLI",
-		PersistentPreRun: func(_ *cobra.Command, _ []string) {
-		},
 	}
 
 	cmd.AddCommand(versionCmd(version, commit, date))
+	cmd.AddCommand(diff.Command())
 
 	return cmd
 }

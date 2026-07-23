@@ -6,10 +6,10 @@ import (
 )
 
 type Review struct {
-	Summary           string       `json:"summary"`
-	ReviewScore       ReviewScore  `json:"review_score"`
-	SecuritySensitive bool         `json:"security_sensitive"`
-	Comments          []Comment    `json:"comments"`
+	Summary           string      `json:"summary"`
+	ReviewScore       ReviewScore `json:"review_score"`
+	SecuritySensitive bool        `json:"security_sensitive"`
+	Comments          []Comment   `json:"comments"`
 }
 
 type ReviewScore struct {

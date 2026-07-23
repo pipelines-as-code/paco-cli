@@ -93,11 +93,11 @@ func fetchReviewThreads(ctx context.Context, runner command.Runner, owner, name,
 							IsResolved bool `json:"isResolved"`
 							Comments   struct {
 								Nodes []struct {
-									Path             string `json:"path"`
-									Line             *int   `json:"line"`
-									OriginalLine     *int   `json:"originalLine"`
-									Body             string `json:"body"`
-									Author           struct{ Login string } `json:"author"`
+									Path              string                 `json:"path"`
+									Line              *int                   `json:"line"`
+									OriginalLine      *int                   `json:"originalLine"`
+									Body              string                 `json:"body"`
+									Author            struct{ Login string } `json:"author"`
 									PullRequestReview struct{ State string } `json:"pullRequestReview"`
 								} `json:"nodes"`
 							} `json:"comments"`

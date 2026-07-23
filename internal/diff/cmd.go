@@ -35,8 +35,10 @@ func Command() *cobra.Command {
 	return cmd
 }
 
-const maxDiffBytes = 200000
-const maxFeedbackBytes = 30000
+const (
+	maxDiffBytes     = 200000
+	maxFeedbackBytes = 30000
+)
 
 type Options struct {
 	Repo      string
@@ -84,7 +86,8 @@ func Run(ctx context.Context, opts Options) error {
 	if len(rawDiff) > maxDiffBytes {
 		return ws.WriteSkip(fmt.Sprintf(
 			"Paco: PR diff is too large (%d bytes, limit is %d), so review was skipped instead of using a truncated diff.",
-			len(rawDiff), maxDiffBytes))
+			len(rawDiff), maxDiffBytes,
+		))
 	}
 
 	// Redact before writing

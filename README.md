@@ -2,10 +2,8 @@
 
 Go CLI for the Paco AI code reviewer.
 
-Paco reviews GitHub pull requests using an LLM and posts inline findings.
-This CLI replaces the bash/jq/awk/Node.js scripts in the
-[Pipelines-as-Code](https://github.com/openshift-pipelines/pipelines-as-code)
-`.tekton/paco.yaml` pipeline with a testable, reviewable Go binary.
+Paco reviews GitHub pull requests using an LLM and posts inline
+findings, a summary comment, and review-difficulty labels.
 
 ## Status
 

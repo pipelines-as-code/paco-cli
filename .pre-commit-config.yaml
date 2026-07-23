@@ -1,0 +1,38 @@
+default_install_hook_types: ["pre-push"]
+exclude: '(^vendor|.*golden$)'
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-toml
+      - id: check-shebang-scripts-are-executable
+      - id: check-json
+      - id: check-vcs-permalinks
+      - id: detect-private-key
+        exclude: ".*_test.go"
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.2
+    hooks:
+      - id: codespell
+        files: "^(internal|cmd|docs)/.*"
+  - repo: local
+    hooks:
+      - id: test
+        name: "Unit testing"
+        entry: make
+        args: ["test"]
+        language: system
+        types: [go]
+        pass_filenames: false
+      - id: lint
+        name: "Go Linting"
+        entry: make
+        args: ["lint"]
+        language: system
+        pass_filenames: false
+      - id: shellcheck
+        name: "Shellcheck"
+        entry: "shellcheck"
+        language: system
+        types: [shell]

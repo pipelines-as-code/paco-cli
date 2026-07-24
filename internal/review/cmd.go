@@ -46,6 +46,7 @@ func Run(ctx context.Context, opts Options) error {
 	ws := &artifact.Workspace{Dir: opts.Workspace}
 
 	writeFail := func(msg string) error {
+		fmt.Fprintln(os.Stderr, msg)
 		review := Review{Summary: msg, Comments: []Comment{}}
 		data, _ := json.Marshal(review)
 		if err := ws.Write(artifact.FileReview, data); err != nil {
@@ -150,6 +151,20 @@ func Run(ctx context.Context, opts Options) error {
 	fmt.Println("Starting opencode review...")
 	startedAt := time.Now()
 
+	stopHeartbeat := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Printf("Paco review still running (%ds elapsed)\n", int(time.Since(startedAt).Seconds()))
+			case <-stopHeartbeat:
+				return
+			}
+		}
+	}()
+
 	runCtx, cancel := context.WithTimeout(ctx, openCodeTimeout)
 	defer cancel()
 
@@ -160,6 +175,7 @@ func Run(ctx context.Context, opts Options) error {
 		"--variant", "minimal",
 	}, env, []byte(prompt))
 
+	close(stopHeartbeat)
 	elapsed := time.Since(startedAt)
 
 	if err != nil || result.ExitCode != 0 {

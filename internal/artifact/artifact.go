@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -45,6 +46,7 @@ func (w *Workspace) Exists(name string) bool {
 }
 
 func (w *Workspace) WriteSkip(reason string) error {
+	fmt.Fprintln(os.Stderr, reason)
 	if err := w.Write(FileError, []byte(reason+"\n")); err != nil {
 		return err
 	}

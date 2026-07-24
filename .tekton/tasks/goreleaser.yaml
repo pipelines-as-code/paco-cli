@@ -39,7 +39,7 @@ spec:
       workingDir: $(workspaces.source.path)
       script: |
         git config --global --add safe.directory $(workspaces.source.path)
-        goreleaser release $(params.flags)
+        GOTOOLCHAIN=auto goreleaser release $(params.flags)
       env:
         - name: CI
           value: ""

@@ -1,7 +1,6 @@
 package post
 
 import (
-	"encoding/json"
 	"os"
 	"strconv"
 	"testing"
@@ -132,15 +131,15 @@ func TestBuildInlineCommentsSeverityFormatting(t *testing.T) {
 
 func TestBuildStatusLines(t *testing.T) {
 	tests := []struct {
-		name             string
-		failed           bool
-		mode             string
-		commentCount     int
-		rating           int
-		reason           string
-		wantEmoji        string
-		wantHasFindings  bool
-		wantHasScore     bool
+		name            string
+		failed          bool
+		mode            string
+		commentCount    int
+		rating          int
+		reason          string
+		wantEmoji       string
+		wantHasFindings bool
+		wantHasScore    bool
 	}{
 		{
 			name:      "failed path",
@@ -194,9 +193,9 @@ func TestBuildStatusLines(t *testing.T) {
 
 func TestBuildStatusLinesRatingClamping(t *testing.T) {
 	tests := []struct {
-		name       string
-		rating     int
-		wantWord   string
+		name     string
+		rating   int
+		wantWord string
 	}{
 		{name: "rating 0 clamped to 3", rating: 0, wantWord: "Moderate"},
 		{name: "rating 6 clamped to 3", rating: 6, wantWord: "Moderate"},
@@ -313,9 +312,5 @@ func searchStr(s, substr string) bool {
 
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	path := dir + "/" + name
-	if err := json.Unmarshal([]byte(content), &json.RawMessage{}); err != nil {
-		// not JSON, write raw
-	}
-	assert.NilError(t, os.WriteFile(path, []byte(content), 0o600))
+	assert.NilError(t, os.WriteFile(dir+"/"+name, []byte(content), 0o600))
 }

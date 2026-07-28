@@ -1,0 +1,151 @@
+# Example PipelineRun for Paco AI code reviewer.
+#
+# Copy this file to .tekton/paco.yaml in your repository and update
+# the values marked CHANGEME below.
+#
+# Triggers:
+#   - Automatically on pull_request opened/reopened to "main".
+#   - On-demand via a "/paco review" or "/paco summary" PR comment.
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: paco
+  annotations:
+    # Auto-trigger on PR events targeting main.
+    pipelinesascode.tekton.dev/on-cel-expression: |
+      event == "pull_request" && target_branch == "main" && (body.action == "opened" || body.action == "reopened")
+    # On-demand trigger via PR comment: "/paco review" or "/paco summary".
+    pipelinesascode.tekton.dev/on-comment: "^/paco[[:space:]]+(review|summary)[[:space:]]*$"
+    pipelinesascode.tekton.dev/max-keep-runs: "2"
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+spec:
+  params:
+    - name: repo_owner
+      value: "{{repo_owner}}"
+    - name: repo_name
+      value: "{{repo_name}}"
+    - name: pull_request_number
+      value: "{{pull_request_number}}"
+    - name: trigger_comment
+      value: |
+        {{ trigger_comment }}
+    # Extract the comment ID from the webhook body so paco can add an
+    # eyes reaction to acknowledge the trigger. Empty for PR events.
+    - name: comment_id
+      value: "{{ cel: has(body.comment) && has(body.comment.id) ? string(body.comment.id) : '' }}"
+    - name: git_auth_secret
+      value: "{{git_auth_secret}}"
+    # CHANGEME: model identifier for the review step.
+    - name: model
+      value: "google-vertex-anthropic/claude-sonnet-5@default"
+    # CHANGEME: name of the Kubernetes secret holding Vertex AI credentials.
+    - name: vertex_credentials_secret
+      value: "paco-vertex-credentials"
+    # CHANGEME: key inside the secret that contains the service-account JSON.
+    - name: vertex_credentials_key
+      value: "service-account.json"
+    # CHANGEME: Google Cloud project ID for Vertex AI.
+    - name: vertex_project
+      value: "my-gcp-project"
+    - name: vertex_location
+      value: "global"
+  pipelineSpec:
+    params:
+      - name: repo_owner
+      - name: repo_name
+      - name: pull_request_number
+      - name: trigger_comment
+      - name: comment_id
+        default: ""
+      - name: git_auth_secret
+      - name: model
+        default: "google-vertex-anthropic/claude-sonnet-5@default"
+      - name: vertex_credentials_secret
+        default: "paco-vertex-credentials"
+      - name: vertex_credentials_key
+        default: "service-account.json"
+      - name: vertex_project
+        default: ""
+      - name: vertex_location
+        default: "global"
+    tasks:
+      - name: paco-review
+        taskSpec:
+          workspaces:
+            - name: source
+          steps:
+            # Step 1 — Fetch the PR diff and existing feedback.
+            - name: compute-diff
+              displayName: "Fetch PR diff via paco"
+              image: ghcr.io/chmouel/agents-image:latest
+              env:
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "$(params.git_auth_secret)"
+                      key: "git-provider-token"
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+                paco diff \
+                  --repo "$(params.repo_owner)/$(params.repo_name)" \
+                  --pr "$(params.pull_request_number)" \
+                  --comment-id "$(params.comment_id)" \
+                  --workspace "$(workspaces.source.path)"
+
+            # Step 2 — Run the AI review.
+            - name: paco-review
+              displayName: "Run Paco review"
+              image: ghcr.io/chmouel/agents-image:latest
+              volumeMounts:
+                - name: vertex-credentials
+                  mountPath: /var/run/secrets/paco-vertex
+                  readOnly: true
+              env:
+                - name: GOOGLE_APPLICATION_CREDENTIALS
+                  value: /var/run/secrets/paco-vertex/credentials.json
+                - name: GOOGLE_CLOUD_PROJECT
+                  value: "$(params.vertex_project)"
+                - name: VERTEX_LOCATION
+                  value: "$(params.vertex_location)"
+                - name: TRIGGER_COMMENT
+                  value: "$(params.trigger_comment)"
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+                export HOME=/tmp/opencode-home
+                mkdir -p "${HOME}"
+                paco review \
+                  --workspace "$(workspaces.source.path)" \
+                  --model "$(params.model)"
+
+            # Step 3 — Post the review results to the pull request.
+            - name: post-review
+              displayName: "Post review to the pull request"
+              image: ghcr.io/chmouel/agents-image:latest
+              env:
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "$(params.git_auth_secret)"
+                      key: "git-provider-token"
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+                paco post \
+                  --repo "$(params.repo_owner)/$(params.repo_name)" \
+                  --pr "$(params.pull_request_number)" \
+                  --workspace "$(workspaces.source.path)"
+          volumes:
+            - name: vertex-credentials
+              secret:
+                secretName: "$(params.vertex_credentials_secret)"
+                items:
+                  - key: "$(params.vertex_credentials_key)"
+                    path: credentials.json
+    workspaces:
+      - name: source
+  workspaces:
+    - name: source
+      emptyDir: {}

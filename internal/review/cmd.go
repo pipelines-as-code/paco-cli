@@ -74,7 +74,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	credData, err := os.ReadFile(credFile)
 	if err != nil {
-		return writeFail("Paco: the Vertex AI service-account credentials are missing or invalid.")
+		return writeFail(fmt.Sprintf("Paco: could not read the Vertex AI credentials file: %s (%v)", credFile, err))
 	}
 	var creds struct {
 		ClientEmail string `json:"client_email"`
@@ -82,7 +82,7 @@ func Run(ctx context.Context, opts Options) error {
 		ProjectID   string `json:"project_id"`
 	}
 	if err := json.Unmarshal(credData, &creds); err != nil || creds.ClientEmail == "" || creds.PrivateKey == "" {
-		return writeFail("Paco: the Vertex AI service-account credentials are missing or invalid.")
+		return writeFail("Paco: the Vertex AI credentials file is missing required fields (client_email or private_key)")
 	}
 
 	vertexProject := os.Getenv("GOOGLE_CLOUD_PROJECT")

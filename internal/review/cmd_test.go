@@ -80,6 +80,16 @@ func TestRunEarlyExit(t *testing.T) {
 			wantFailed: true,
 		},
 		{
+			name: "fails with unreadable credentials file",
+			setup: func(t *testing.T) (string, string) {
+				t.Helper()
+				ws := setupWorkspaceWithDiff(t, "some diff")
+				credFile := filepath.Join(t.TempDir(), "nonexistent", "creds.json")
+				return ws, credFile
+			},
+			wantFailed: true,
+		},
+		{
 			name: "fails with invalid credentials JSON",
 			setup: func(t *testing.T) (string, string) {
 				t.Helper()

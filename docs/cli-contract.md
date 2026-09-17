@@ -48,6 +48,16 @@ Runs the LLM review and produces normalized findings.
 |---|---|---|
 | `--workspace` | no | Workspace directory (default `.`) |
 | `--model` | no | Model identifier (default `google-vertex-anthropic/claude-sonnet-5@default`) |
+| `--reasoning-effort` | no | Reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Empty means `minimal`. Values are trimmed and lowercased |
+
+Passed to opencode as the `paco-reviewer` agent's `variant`. Which values a
+given model actually supports is model-specific; an unsupported one surfaces as
+a normal backend failure.
+
+Verified against opencode `1.18.31`, the version shipped in
+`ghcr.io/chmouel/agents-image`. Note that `--variant` is not a valid
+`opencode run` flag, and a `#variant` suffix on `--model` breaks model
+resolution on that version.
 
 ### Environment
 

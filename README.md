@@ -41,6 +41,7 @@ paco post --repo owner/repo --pr 42 --workspace /workspace/source
 | `--comment-id` | `diff` | no | Trigger comment ID (for eyes reaction) |
 | `--workspace` | all | no | Workspace directory (default `.`) |
 | `--model` | `review` | no | Model identifier (default `google-vertex-anthropic/claude-sonnet-5@default`) |
+| `--reasoning-effort` | `review` | no | Reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` (default `minimal`) |
 
 ### Environment Variables
 

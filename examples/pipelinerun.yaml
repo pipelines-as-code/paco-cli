@@ -39,6 +39,10 @@ spec:
     # CHANGEME: model identifier for the review step.
     - name: model
       value: "google-vertex-anthropic/claude-sonnet-5@default"
+    # Optional: reasoning effort for the LLM.
+    # One of none, minimal, low, medium, high, xhigh, max. Empty means minimal.
+    - name: reasoning_effort
+      value: ""
     # CHANGEME: name of the Kubernetes secret holding Vertex AI credentials.
     - name: vertex_credentials_secret
       value: "paco-vertex-credentials"
@@ -61,6 +65,8 @@ spec:
       - name: git_auth_secret
       - name: model
         default: "google-vertex-anthropic/claude-sonnet-5@default"
+      - name: reasoning_effort
+        default: ""
       - name: vertex_credentials_secret
         default: "paco-vertex-credentials"
       - name: vertex_credentials_key
@@ -118,7 +124,8 @@ spec:
                 mkdir -p "${HOME}"
                 paco review \
                   --workspace "$(workspaces.source.path)" \
-                  --model "$(params.model)"
+                  --model "$(params.model)" \
+                  --reasoning-effort "$(params.reasoning_effort)"
 
             # Step 3 — Post the review results to the pull request.
             - name: post-review

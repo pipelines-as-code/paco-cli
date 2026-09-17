@@ -17,10 +17,34 @@ import (
 const openCodeTimeout = 900 * time.Second
 
 type Options struct {
-	Workspace      string
-	Model          string
-	TriggerComment string
-	Runner         command.Runner
+	Workspace       string
+	Model           string
+	ReasoningEffort string
+	TriggerComment  string
+	Runner          command.Runner
+}
+
+// defaultVariant is applied when --reasoning-effort is not supplied.
+const defaultVariant = "minimal"
+
+var validReasoningEfforts = map[string]bool{
+	"none": true, "minimal": true, "low": true, "medium": true,
+	"high": true, "xhigh": true, "max": true,
+}
+
+// normalizeReasoningEffort resolves the effort into the agent variant opencode
+// should use, falling back to defaultVariant when unset.
+func normalizeReasoningEffort(value string) (string, error) {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v == "" {
+		return defaultVariant, nil
+	}
+	if !validReasoningEfforts[v] {
+		return "", fmt.Errorf(
+			"invalid --reasoning-effort %q: must be one of none, minimal, low, medium, high, xhigh, max", v,
+		)
+	}
+	return v, nil
 }
 
 func Command() *cobra.Command {
@@ -38,6 +62,8 @@ func Command() *cobra.Command {
 
 	cmd.Flags().StringVar(&opts.Workspace, "workspace", ".", "Workspace directory for artifacts")
 	cmd.Flags().StringVar(&opts.Model, "model", "google-vertex-anthropic/claude-sonnet-5@default", "Model to use")
+	cmd.Flags().StringVar(&opts.ReasoningEffort, "reasoning-effort", "",
+		"Reasoning effort: none, minimal, low, medium, high, xhigh, or max (default \""+defaultVariant+"\")")
 
 	return cmd
 }
@@ -59,6 +85,11 @@ func Run(ctx context.Context, opts Options) error {
 	if ws.Exists(artifact.FileError) {
 		errMsg, _ := ws.Read(artifact.FileError)
 		return writeFail(strings.TrimSpace(string(errMsg)))
+	}
+
+	reasoningVariant, err := normalizeReasoningEffort(opts.ReasoningEffort)
+	if err != nil {
+		return writeFail("Paco: " + err.Error())
 	}
 
 	// Check diff exists
@@ -111,19 +142,25 @@ func Run(ctx context.Context, opts Options) error {
 	prompt := BuildPrompt(mode, string(diffData), string(feedback), string(reviewRules))
 
 	// OpenCode config
-	openCodeConfig := `{
-  "permission": "deny",
-  "share": "disabled",
-  "autoupdate": false,
-  "agent": {
-    "paco-reviewer": {
-      "description": "Returns a JSON-only pull request review.",
-      "mode": "primary",
-      "prompt": "You are a non-agentic pull request reviewer. Tools are unavailable and must not be mentioned, requested, or used. Analyze only the supplied prompt and return its requested JSON object with no prose or markdown.",
-      "permission": "deny"
-    }
-  }
-}`
+	openCodeConfigMap := map[string]any{
+		"permission": "deny",
+		"share":      "disabled",
+		"autoupdate": false,
+		"agent": map[string]any{
+			"paco-reviewer": map[string]any{
+				"description": "Returns a JSON-only pull request review.",
+				"mode":        "primary",
+				"prompt":      "You are a non-agentic pull request reviewer. Tools are unavailable and must not be mentioned, requested, or used. Analyze only the supplied prompt and return its requested JSON object with no prose or markdown.",
+				"permission":  "deny",
+				"variant":     reasoningVariant,
+			},
+		},
+	}
+	openCodeConfigBytes, err := json.Marshal(openCodeConfigMap)
+	if err != nil {
+		return fmt.Errorf("marshaling opencode config: %w", err)
+	}
+	openCodeConfig := string(openCodeConfigBytes)
 
 	// Run opencode with sanitized environment
 	vertexLocation := os.Getenv("VERTEX_LOCATION")
@@ -172,7 +209,6 @@ func Run(ctx context.Context, opts Options) error {
 		"run",
 		"--agent", "paco-reviewer",
 		"--model", opts.Model,
-		"--variant", "minimal",
 	}, env, []byte(prompt))
 
 	close(stopHeartbeat)

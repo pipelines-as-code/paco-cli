@@ -3,8 +3,10 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
@@ -303,4 +305,158 @@ func TestRunOpenCodeFailure(t *testing.T) {
 	})
 	assert.NilError(t, err)
 	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileFailed)))
+}
+
+func TestNormalizeReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+		valid bool
+	}{
+		{"empty falls back to default", "", defaultVariant, true},
+		{"lowercase passes through", "high", "high", true},
+		{"trims and lowercases", " HIGH \n", "high", true},
+		{"none", "none", "none", true},
+		{"minimal", "minimal", "minimal", true},
+		{"xhigh", "xhigh", "xhigh", true},
+		{"max", "max", "max", true},
+		{"unknown word", "extreme", "", false},
+		{"numeric", "3", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeReasoningEffort(tt.value)
+			if !tt.valid {
+				assert.ErrorContains(t, err, "invalid --reasoning-effort")
+				return
+			}
+			assert.NilError(t, err)
+			assert.Equal(t, got, tt.want)
+		})
+	}
+}
+
+// captureOpencode installs a fake opencode that records its argv and the
+// config it was handed, so tests can assert what paco actually invokes.
+func captureOpencode(t *testing.T, ws string) (argvPath, configPath string) {
+	t.Helper()
+	argvPath = filepath.Join(ws, "captured-argv.txt")
+	configPath = filepath.Join(ws, "captured-config.json")
+	setupFakeOpencode(t, fmt.Sprintf(
+		`printf '%%s\n' "$@" > %s; printenv OPENCODE_CONFIG_CONTENT > %s; printf '{"summary":"ok","comments":[]}'`,
+		argvPath, configPath,
+	))
+	return argvPath, configPath
+}
+
+func TestRunOpencodeInvocation(t *testing.T) {
+	const model = "google-vertex-anthropic/claude-sonnet-5@default"
+	tests := []struct {
+		name        string
+		effort      string
+		wantVariant string
+	}{
+		{"defaults the variant when effort is unset", "", defaultVariant},
+		{"passes the requested effort as a variant", "high", "high"},
+		{"trims and lowercases the effort", " LOW \n", "low"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := setupWorkspaceWithDiff(t, "some diff")
+			credFile := writeFakeCredentials(t)
+			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
+			t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
+			argvPath, configPath := captureOpencode(t, ws)
+
+			err := Run(context.Background(), Options{
+				Workspace:       ws,
+				Model:           model,
+				ReasoningEffort: tt.effort,
+				Runner:          &command.ExecRunner{},
+			})
+			assert.NilError(t, err)
+
+			argvData, err := os.ReadFile(argvPath)
+			assert.NilError(t, err)
+			argv := strings.Fields(string(argvData))
+
+			// --variant is not a real `opencode run` flag: 1.18.31 ignores it
+			// and 2.x rejects it outright.
+			for _, arg := range argv {
+				assert.Assert(t, arg != "--variant", "argv must not contain --variant: %v", argv)
+			}
+
+			// A "#variant" suffix breaks model resolution on opencode 1.18.31,
+			// so the model must be passed through untouched.
+			modelIdx := -1
+			for i, arg := range argv {
+				if arg == "--model" {
+					modelIdx = i
+					break
+				}
+			}
+			assert.Assert(t, modelIdx >= 0 && modelIdx+1 < len(argv), "argv missing --model: %v", argv)
+			assert.Equal(t, argv[modelIdx+1], model)
+
+			configData, err := os.ReadFile(configPath)
+			assert.NilError(t, err)
+			var config map[string]any
+			assert.NilError(t, json.Unmarshal(configData, &config))
+
+			agents := config["agent"].(map[string]any)
+			reviewer := agents["paco-reviewer"].(map[string]any)
+			assert.Equal(t, reviewer["variant"], tt.wantVariant)
+
+			// options is an unvalidated passthrough that Anthropic ignores;
+			// sending it would only look like the effort was applied.
+			_, hasOptions := reviewer["options"]
+			assert.Assert(t, !hasOptions, "agent config must not carry an options key")
+		})
+	}
+}
+
+func TestRunReasoningEffortInvalid(t *testing.T) {
+	ws := setupWorkspaceWithDiff(t, "some diff")
+	credFile := writeFakeCredentials(t)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
+	argvPath, _ := captureOpencode(t, ws)
+
+	err := Run(context.Background(), Options{
+		Workspace:       ws,
+		ReasoningEffort: "turbo",
+		Runner:          &command.ExecRunner{},
+	})
+	assert.NilError(t, err)
+	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileFailed)))
+	assert.Assert(t, !fileExists(argvPath), "opencode must not run on invalid input")
+
+	reviewData, err := os.ReadFile(filepath.Join(ws, artifact.FileReview))
+	assert.NilError(t, err)
+	var review Review
+	assert.NilError(t, json.Unmarshal(reviewData, &review))
+	assert.Assert(t, strings.Contains(review.Summary, "invalid --reasoning-effort"), "got summary %q", review.Summary)
+}
+
+func TestRunErrorFileWinsOverInvalidReasoningEffort(t *testing.T) {
+	ws := setupWorkspaceWithDiff(t, "some diff")
+	assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileError), []byte("skip reason"), 0o600))
+	credFile := writeFakeCredentials(t)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
+
+	err := Run(context.Background(), Options{
+		Workspace:       ws,
+		ReasoningEffort: "turbo",
+		Runner:          &command.ExecRunner{},
+	})
+	assert.NilError(t, err)
+
+	reviewData, err := os.ReadFile(filepath.Join(ws, artifact.FileReview))
+	assert.NilError(t, err)
+	var review Review
+	assert.NilError(t, json.Unmarshal(reviewData, &review))
+	assert.Equal(t, review.Summary, "skip reason")
 }

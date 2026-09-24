@@ -84,6 +84,12 @@ in [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml).
    format. Paco loads these from the base branch so a PR cannot weaken
    its own review criteria.
 
+4. Paco also reads the language versions declared on the base branch
+   (`go.mod`, `.python-version`, `package.json` engines, and similar)
+   and reviews code against them. See the
+   [CLI contract](docs/cli-contract.md#toolchain-detection) for the
+   supported files.
+
 ### Triggers
 
 | Trigger | Behavior |

@@ -28,6 +28,27 @@ Fetches the PR diff and existing feedback, writes artifacts for downstream steps
 | `.head_sha` | HEAD commit SHA |
 | `.paco-error` | Skip reason (written on early exit) |
 | `.tekton/ai/REVIEW.md` | Repository review rules from base branch (if present) |
+| `.toolchain-versions` | Language versions declared on the base branch (if any), one `language<TAB>version<TAB>source` line each |
+
+### Toolchain Detection
+
+`paco diff` lists the base branch root once and fetches only the version
+files present there. The first file declaring a language wins:
+
+| Language | Files, in priority order |
+|---|---|
+| Go | `go.mod` (`go` directive) |
+| Rust | `rust-toolchain.toml` (`channel`), `rust-toolchain`, `Cargo.toml` (`rust-version`) |
+| Python | `.python-version`, `pyproject.toml` (`requires-python`) |
+| Node.js | `.nvmrc`, `.node-version`, `package.json` (`engines.node`) |
+| Ruby | `.ruby-version` |
+| Java | `.java-version` |
+| Any of the above | `.tool-versions` (asdf/mise) |
+
+`paco review` uses these declarations as compatibility context, taking
+version ranges and version-file changes in the diff into account. It
+does not treat the model's training data as proof that newer syntax or
+APIs are invalid.
 
 ### Exit Codes
 
@@ -68,7 +89,7 @@ resolution on that version.
 
 ### Artifacts Read
 
-- `.pr.diff`, `.paco-error`, `.existing-feedback.txt`, `.tekton/ai/REVIEW.md`
+- `.pr.diff`, `.paco-error`, `.existing-feedback.txt`, `.tekton/ai/REVIEW.md`, `.toolchain-versions`
 
 ### Artifacts Written
 

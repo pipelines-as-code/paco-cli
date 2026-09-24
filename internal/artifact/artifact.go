@@ -18,6 +18,7 @@ const (
 	FileFailed           = ".paco-failed"
 	FileSecurityBlock    = ".paco-security-block"
 	FileReviewRules      = ".tekton/ai/REVIEW.md"
+	FileToolchains       = ".toolchain-versions"
 )
 
 type Workspace struct {

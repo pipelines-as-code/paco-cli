@@ -14,6 +14,13 @@
   branch only, never from the PR head. A PR cannot weaken its own
   review rules.
 
+- **Toolchain versions** (`.toolchain-versions`) come from version files
+  on the base branch only, such as `go.mod` or `.python-version`. Both
+  `paco diff` and `paco review` drop any entry whose language, source
+  file, or version string does not match the known detectors. Values
+  matching credential patterns are also dropped. Optional artifacts
+  from earlier runs are removed before fetching the current base branch.
+
 - **Model output** is untrusted. It passes through secret scanning
   before any GitHub write.
 

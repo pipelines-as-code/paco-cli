@@ -11,6 +11,7 @@ import (
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
 	"github.com/pipelines-as-code/paco-cli/internal/command"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
+	"github.com/pipelines-as-code/paco-cli/internal/toolchain"
 	"github.com/spf13/cobra"
 )
 
@@ -139,7 +140,8 @@ func Run(ctx context.Context, opts Options) error {
 	// Build prompt
 	feedback, _ := ws.Read(artifact.FileExistingFeedback)
 	reviewRules, _ := ws.Read(artifact.FileReviewRules)
-	prompt := BuildPrompt(mode, string(diffData), string(feedback), string(reviewRules))
+	toolchainData, _ := ws.Read(artifact.FileToolchains)
+	prompt := BuildPrompt(mode, string(diffData), string(feedback), string(reviewRules), toolchain.Parse(toolchainData))
 
 	// OpenCode config
 	openCodeConfigMap := map[string]any{

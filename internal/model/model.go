@@ -52,6 +52,11 @@ type Request struct {
 	MaxTokens int64
 	Tools     Toolset
 	WebSearch bool
+	// Budget nil creates a fresh default budget for this completion.
+	Budget *Budget
+	// Limits caps this completion without consuming unused allowances. For
+	// two passes, use {4, 12, 2} for discovery and nil for verification.
+	Limits *Limits
 }
 
 type Tool struct {
@@ -66,9 +71,10 @@ type Toolset interface {
 	Call(context.Context, string, json.RawMessage) (string, error)
 }
 
-// Result is the text of a completed response.
+// Result contains text only on success, and usage even when Complete fails.
 type Result struct {
-	Text string
+	Text  string
+	Usage Usage
 }
 
 // Client completes a request.
@@ -235,7 +241,23 @@ type client struct {
 }
 
 // Complete runs a bounded tool loop and only returns a fully finished answer.
-func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
+func (c *client) Complete(ctx context.Context, req Request) (result Result, err error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+	budget := req.Budget
+	if budget == nil {
+		budget = NewBudget()
+	}
+	limits, err := budget.begin(req.Limits)
+	if err != nil {
+		return Result{}, err
+	}
+	var usage Usage
+	defer func() {
+		result.Usage = usage
+		budget.end()
+	}()
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(req.Model),
 		MaxTokens: req.MaxTokens,
@@ -266,19 +288,54 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	clientTools := params.Tools
-	toolCalls, searches := 0, 0
-	for range maxTurns {
+	var toolCalls, searches int64
+	for range limits.Turns {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		params.Tools = append([]anthropic.ToolUnionParam(nil), clientTools...)
-		if req.WebSearch && searches < maxWebSearches {
+		if req.WebSearch && searches < limits.WebSearches {
 			params.Tools = append(params.Tools, anthropic.ToolUnionParam{
 				OfWebSearchTool20250305: &anthropic.WebSearchTool20250305Param{
-					MaxUses: anthropic.Int(int64(maxWebSearches - searches)),
+					MaxUses: anthropic.Int(limits.WebSearches - searches),
 				},
 			})
 		}
-		msg, err := c.streamMessage(ctx, params)
+		params.MaxTokens, err = budget.turn(req.MaxTokens)
 		if err != nil {
 			return Result{}, err
+		}
+		usage.ModelRequests++
+		msg, err := c.streamMessage(ctx, params)
+		reported := Usage{
+			InputTokens:              msg.Usage.InputTokens + msg.Usage.CacheCreationInputTokens + msg.Usage.CacheReadInputTokens,
+			OutputTokens:             msg.Usage.OutputTokens,
+			CacheCreationInputTokens: msg.Usage.CacheCreationInputTokens,
+			CacheReadInputTokens:     msg.Usage.CacheReadInputTokens,
+		}
+		usage.add(reported)
+		var blockSearches int64
+		for _, block := range msg.Content {
+			if block.Type == "server_tool_use" && block.Name == "web_search" {
+				blockSearches++
+			}
+		}
+		// Usage is authoritative when higher, but partial streams may only
+		// report tool blocks. Do not count the same search twice.
+		messageSearches := max(blockSearches, msg.Usage.ServerToolUse.WebSearchRequests)
+		searches += messageSearches
+		budgetErr := budget.record(reported, messageSearches)
+		if err != nil {
+			return Result{}, err
+		}
+		if budgetErr != nil {
+			return Result{}, budgetErr
+		}
+		if searches > limits.WebSearches {
+			return Result{}, &IncompleteError{Reason: "web search limit reached"}
+		}
+		if !req.WebSearch && messageSearches > 0 {
+			return Result{}, &IncompleteError{Reason: "unexpected server tool"}
 		}
 		var results []anthropic.ContentBlockParamUnion
 		for _, block := range msg.Content {
@@ -286,10 +343,6 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 			case "server_tool_use":
 				if !req.WebSearch || block.Name != "web_search" {
 					return Result{}, &IncompleteError{Reason: "unexpected server tool"}
-				}
-				searches++
-				if searches > maxWebSearches {
-					return Result{}, &IncompleteError{Reason: "web search limit reached"}
 				}
 				fmt.Println("Model tool: web_search")
 			case "web_search_tool_result":
@@ -308,13 +361,19 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 				if msg.StopReason != anthropic.StopReasonToolUse {
 					return Result{}, &IncompleteError{Reason: "tool request without tool_use stop reason"}
 				}
-				toolCalls++
-				if toolCalls > maxToolCalls {
+				if toolCalls >= limits.ToolCalls {
 					return Result{}, &IncompleteError{Reason: "repository tool call limit reached"}
 				}
 				if !allowed[block.Name] {
 					return Result{}, &IncompleteError{Reason: "unexpected repository tool"}
 				}
+				if err := ctx.Err(); err != nil {
+					return Result{}, err
+				}
+				if err := budget.tool(); err != nil {
+					return Result{}, err
+				}
+				toolCalls++
 				fmt.Printf("Model tool: %s\n", block.Name)
 				output, callErr := req.Tools.Call(ctx, block.Name, block.Input)
 				if ctx.Err() != nil {
@@ -368,20 +427,20 @@ func (c *client) streamMessage(ctx context.Context, params anthropic.MessageNewP
 	for stream.Next() {
 		ev := stream.Current()
 		if err := msg.Accumulate(ev); err != nil {
-			return anthropic.Message{}, err
+			return msg, err
 		}
 		if ev.Type == "message_stop" {
 			stopped = true
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return anthropic.Message{}, err
+		return msg, err
 	}
 	if err := ctx.Err(); err != nil {
-		return anthropic.Message{}, err
+		return msg, err
 	}
 	if !stopped {
-		return anthropic.Message{}, &IncompleteError{Reason: "stream ended before message_stop"}
+		return msg, &IncompleteError{Reason: "stream ended before message_stop"}
 	}
 	return msg, nil
 }

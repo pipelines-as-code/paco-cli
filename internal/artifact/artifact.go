@@ -17,6 +17,7 @@ const (
 	FileMode             = ".paco-mode"
 	FileFailed           = ".paco-failed"
 	FileSecurityBlock    = ".paco-security-block"
+	FileStatus           = ".paco-status.json"
 	FileReviewRules      = ".tekton/ai/REVIEW.md"
 	FileToolchains       = ".toolchain-versions"
 	FileSource           = ".paco-source.json"

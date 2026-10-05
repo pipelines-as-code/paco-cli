@@ -56,6 +56,8 @@ spec:
     # Set false to disable public-documentation search.
     - name: web_search
       value: "true"
+    - name: verify_findings
+      value: "false"
     # CHANGEME: name of the Kubernetes secret holding Vertex AI credentials.
     - name: vertex_credentials_secret
       value: "paco-vertex-credentials"
@@ -86,6 +88,8 @@ spec:
         default: "true"
       - name: web_search
         default: "true"
+      - name: verify_findings
+        default: "false"
       - name: vertex_credentials_secret
         default: "paco-vertex-credentials"
       - name: vertex_credentials_key
@@ -141,6 +145,7 @@ spec:
                 - "--reasoning-effort=$(params.reasoning_effort)"
                 - "--no-structured-output=$(params.no_structured_output)"
                 - "--web-search=$(params.web_search)"
+                - "--verify-findings=$(params.verify_findings)"
 
             # Step 3: Post the review results to the pull request.
             - name: post-review

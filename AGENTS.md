@@ -31,4 +31,5 @@
   prompt construction, external API clients) requires owner review
 - All GitHub calls go through `internal/ghclient`
 - All model calls go through `internal/model`
+- Repository tools read only the validated PR-head snapshot in `internal/source`
 - No subprocesses: do not use `os/exec`

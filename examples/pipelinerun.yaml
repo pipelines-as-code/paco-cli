@@ -47,9 +47,15 @@ spec:
     - name: model
       value: ""
     # Optional: reasoning effort for the model.
-    # One of low, medium, high, xhigh, max. Empty means low.
+    # One of none (omit), low, medium, high, xhigh, max. Empty means low.
     - name: reasoning_effort
       value: ""
+    # Plain JSON output permits web search without API-enforced schemas.
+    - name: no_structured_output
+      value: "true"
+    # Set false to disable public-documentation search.
+    - name: web_search
+      value: "true"
     # CHANGEME: name of the Kubernetes secret holding Vertex AI credentials.
     - name: vertex_credentials_secret
       value: "paco-vertex-credentials"
@@ -76,6 +82,10 @@ spec:
         default: ""
       - name: reasoning_effort
         default: ""
+      - name: no_structured_output
+        default: "true"
+      - name: web_search
+        default: "true"
       - name: vertex_credentials_secret
         default: "paco-vertex-credentials"
       - name: vertex_credentials_key
@@ -129,6 +139,8 @@ spec:
                 - "--workspace=$(workspaces.source.path)"
                 - "--model=$(params.model)"
                 - "--reasoning-effort=$(params.reasoning_effort)"
+                - "--no-structured-output=$(params.no_structured_output)"
+                - "--web-search=$(params.web_search)"
 
             # Step 3 — Post the review results to the pull request.
             - name: post-review

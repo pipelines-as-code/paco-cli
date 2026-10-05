@@ -32,10 +32,10 @@ func CheckRedirect(allowInsecure bool) func(*http.Request, []*http.Request) erro
 			return fmt.Errorf("stopped after %d redirects", len(via))
 		}
 		if !allowInsecure && req.URL.Scheme != "https" {
-			return fmt.Errorf("refusing non-https redirect to %s", req.URL.Redacted())
+			return fmt.Errorf("refusing non-https redirect")
 		}
 		if Origin(req.URL) != Origin(via[0].URL) {
-			return fmt.Errorf("refusing cross-origin redirect to %s", req.URL.Redacted())
+			return fmt.Errorf("refusing cross-origin redirect")
 		}
 		return nil
 	}

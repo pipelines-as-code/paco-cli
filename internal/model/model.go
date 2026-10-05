@@ -44,6 +44,20 @@ type Request struct {
 	Effort    string
 	Schema    map[string]any
 	MaxTokens int64
+	Tools     Toolset
+	WebSearch bool
+}
+
+type Tool struct {
+	Name        string
+	Description string
+	Properties  map[string]any
+	Required    []string
+}
+
+type Toolset interface {
+	Definitions() []Tool
+	Call(context.Context, string, json.RawMessage) (string, error)
 }
 
 // Result is the text of a completed response.
@@ -215,8 +229,7 @@ type client struct {
 	sdk *anthropic.Client
 }
 
-// Complete streams the response so long reviews are not cut by the SDK's
-// non-streaming timeout guard, and only accepts a fully finished turn.
+// Complete runs a bounded tool loop and only returns a fully finished answer.
 func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(req.Model),
@@ -233,6 +246,115 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 		params.OutputConfig.Format = anthropic.JSONOutputFormatParam{Schema: req.Schema}
 	}
 
+	allowed := map[string]bool{}
+	if req.Tools != nil {
+		for _, tool := range req.Tools.Definitions() {
+			allowed[tool.Name] = true
+			params.Tools = append(params.Tools, anthropic.ToolUnionParam{OfTool: &anthropic.ToolParam{
+				Name:        tool.Name,
+				Description: anthropic.String(tool.Description),
+				InputSchema: anthropic.ToolInputSchemaParam{
+					Properties: tool.Properties, Required: tool.Required,
+					ExtraFields: map[string]any{"additionalProperties": false},
+				},
+			}})
+		}
+	}
+	clientTools := params.Tools
+	toolCalls, searches := 0, 0
+	for range 8 {
+		params.Tools = append([]anthropic.ToolUnionParam(nil), clientTools...)
+		if req.WebSearch && searches < 3 {
+			params.Tools = append(params.Tools, anthropic.ToolUnionParam{
+				OfWebSearchTool20250305: &anthropic.WebSearchTool20250305Param{
+					MaxUses: anthropic.Int(int64(3 - searches)),
+				},
+			})
+		}
+		msg, err := c.streamMessage(ctx, params)
+		if err != nil {
+			return Result{}, err
+		}
+		var results []anthropic.ContentBlockParamUnion
+		for _, block := range msg.Content {
+			switch block.Type {
+			case "server_tool_use":
+				if !req.WebSearch || block.Name != "web_search" {
+					return Result{}, &IncompleteError{Reason: "unexpected server tool"}
+				}
+				searches++
+				if searches > 3 {
+					return Result{}, &IncompleteError{Reason: "web search limit reached"}
+				}
+				fmt.Println("Model tool: web_search")
+			case "web_search_tool_result":
+				var result struct {
+					Content struct {
+						Type      string `json:"type"`
+						ErrorCode string `json:"error_code"`
+					} `json:"content"`
+				}
+				// Successful search results have array content, not an error object.
+				if json.Unmarshal([]byte(block.RawJSON()), &result) == nil &&
+					result.Content.Type == "web_search_tool_result_error" {
+					return Result{}, &IncompleteError{Reason: "web search failed: " + result.Content.ErrorCode}
+				}
+			case "tool_use":
+				if msg.StopReason != anthropic.StopReasonToolUse {
+					return Result{}, &IncompleteError{Reason: "tool request without tool_use stop reason"}
+				}
+				toolCalls++
+				if toolCalls > 24 {
+					return Result{}, &IncompleteError{Reason: "repository tool call limit reached"}
+				}
+				if !allowed[block.Name] {
+					return Result{}, &IncompleteError{Reason: "unexpected repository tool"}
+				}
+				fmt.Printf("Model tool: %s\n", block.Name)
+				output, callErr := req.Tools.Call(ctx, block.Name, block.Input)
+				if ctx.Err() != nil {
+					return Result{}, ctx.Err()
+				}
+				if callErr != nil {
+					output = callErr.Error()
+				}
+				if len(output) > 16000 {
+					return Result{}, &IncompleteError{Reason: "repository tool result exceeded 16000 bytes"}
+				}
+				results = append(results, anthropic.NewToolResultBlock(block.ID, output, callErr != nil))
+			}
+		}
+		switch msg.StopReason {
+		case anthropic.StopReasonToolUse:
+			if len(results) == 0 {
+				return Result{}, &IncompleteError{Reason: "tool_use stop without tool requests"}
+			}
+			params.Messages = append(params.Messages, msg.ToParam(), anthropic.NewUserMessage(results...))
+		case anthropic.StopReasonPauseTurn:
+			if !req.WebSearch {
+				return Result{}, &IncompleteError{Reason: "unexpected pause_turn"}
+			}
+			params.Messages = append(params.Messages, msg.ToParam())
+		case anthropic.StopReasonEndTurn, anthropic.StopReasonStopSequence:
+			var text strings.Builder
+			for _, block := range msg.Content {
+				if block.Type == "text" {
+					text.WriteString(block.Text)
+				}
+			}
+			return Result{Text: text.String(), StopReason: string(msg.StopReason)}, nil
+		case anthropic.StopReasonMaxTokens:
+			return Result{}, &IncompleteError{Reason: "output token limit reached"}
+		case anthropic.StopReasonRefusal:
+			return Result{}, &IncompleteError{Reason: "the model refused to answer"}
+		default:
+			return Result{}, &IncompleteError{Reason: fmt.Sprintf("unexpected stop reason %q", msg.StopReason)}
+		}
+	}
+	return Result{}, &IncompleteError{Reason: "model turn limit reached"}
+}
+
+func (c *client) streamMessage(ctx context.Context, params anthropic.MessageNewParams) (anthropic.Message, error) {
 	stream := c.sdk.Messages.NewStreaming(ctx, params)
 	defer func() { _ = stream.Close() }()
 
@@ -241,36 +363,20 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 	for stream.Next() {
 		ev := stream.Current()
 		if err := msg.Accumulate(ev); err != nil {
-			return Result{}, err
+			return anthropic.Message{}, err
 		}
 		if ev.Type == "message_stop" {
 			stopped = true
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return Result{}, err
+		return anthropic.Message{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return Result{}, err
+		return anthropic.Message{}, err
 	}
 	if !stopped {
-		return Result{}, &IncompleteError{Reason: "stream ended before message_stop"}
+		return anthropic.Message{}, &IncompleteError{Reason: "stream ended before message_stop"}
 	}
-	switch msg.StopReason {
-	case anthropic.StopReasonEndTurn, anthropic.StopReasonStopSequence:
-	case anthropic.StopReasonMaxTokens:
-		return Result{}, &IncompleteError{Reason: "output token limit reached"}
-	case anthropic.StopReasonRefusal:
-		return Result{}, &IncompleteError{Reason: "the model refused to answer"}
-	default:
-		return Result{}, &IncompleteError{Reason: fmt.Sprintf("unexpected stop reason %q", msg.StopReason)}
-	}
-
-	var text strings.Builder
-	for _, block := range msg.Content {
-		if block.Type == "text" {
-			text.WriteString(block.Text)
-		}
-	}
-	return Result{Text: text.String(), StopReason: string(msg.StopReason)}, nil
+	return msg, nil
 }

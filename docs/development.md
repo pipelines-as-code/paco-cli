@@ -56,6 +56,7 @@ internal/post/              # paco post: sticky, labels, inline review
 internal/ghclient/            # GitHub API client (REST and GraphQL)
 internal/ghclient/ghtest/     # fake GitHub API for tests
 internal/model/              # Claude client (Vertex AI or Anthropic API)
+internal/source/             # bounded PR snapshots and read-only tools
 internal/httpsafe/           # redirect and origin checks
 internal/toolchain/          # base-branch language version detection
 internal/artifact/           # workspace file helpers

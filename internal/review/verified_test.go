@@ -151,6 +151,9 @@ func TestVerifiedReviewHTTP(t *testing.T) {
 			assert.Equal(t, len(result.SummaryFindings), tt.accepted)
 			assert.Equal(t, fileExists(filepath.Join(ws, artifact.FileFailed)), tt.failed)
 			assert.Equal(t, len(*requests), 2)
+			for _, request := range *requests {
+				assert.Assert(t, strings.Contains(jsonText(t, request["messages"]), "source_json="))
+			}
 			// The verifier starts a fresh conversation, rather than inheriting
 			// the discoverer's assistant/tool history.
 			messages, ok := (*requests)[1]["messages"].([]any)
@@ -296,6 +299,67 @@ func TestToolCoverageTracksMissingAndTruncatedSource(t *testing.T) {
 				assert.NilError(t, err)
 			}
 			assert.Equal(t, tools.incomplete, tt.incomplete)
+		})
+	}
+}
+
+func TestNumberedSourcePreservesExactWhitespace(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		modified string
+	}{
+		{
+			name:     "Go spaces replaced with tabs",
+			text:     "func parse(s string) (int, error) {\n n, _ := strconv.Atoi(s)\n return n, nil\n}",
+			modified: "func parse(s string) (int, error) {\n\tn, _ := strconv.Atoi(s)\n\treturn n, nil\n}",
+		},
+		{
+			name:     "Python indentation",
+			text:     "if enabled:\n    run()\nfinish()",
+			modified: "if enabled:\nrun()\nfinish()",
+		},
+		{
+			name:     "significant string whitespace",
+			text:     "value := ` first\t  \n second `",
+			modified: "value := `first\nsecond`",
+		},
+		{
+			name:     "escapes and trailing whitespace",
+			text:     "\tvalue := \"a\\\\b\\\"c\"  \r\n",
+			modified: "\tvalue := \"a\\\\b\\\"c\"\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := strings.Split(tt.text, "\n")
+			var hunk source.Hunk
+			for i, line := range lines {
+				hunk.Lines = append(hunk.Lines, source.DiffLine{Kind: "delete", OldLine: i + 1, Content: line})
+			}
+			for i, line := range lines {
+				hunk.Lines = append(hunk.Lines, source.DiffLine{Kind: "add", NewLine: i + 1, Content: line})
+			}
+			parsed := &source.Diff{Files: []source.FileDiff{{
+				OldPath: "file", NewPath: "file", Status: "modified", Hunks: []source.Hunk{hunk},
+			}}}
+			evidence, numbered := buildEvidenceContext(parsed, nil, nil)
+			var decoded []string
+			for _, line := range strings.Split(numbered, "\n") {
+				if _, encoded, ok := strings.Cut(line, " source_json="); ok {
+					var content string
+					assert.NilError(t, json.Unmarshal([]byte(encoded), &content))
+					decoded = append(decoded, content)
+				}
+			}
+			assert.DeepEqual(t, decoded, append(append([]string{}, lines...), lines...))
+			assert.Assert(t, !strings.Contains(numbered, "\t"), "tabs must be JSON-escaped")
+			for _, revision := range []string{"head", "before"} {
+				ref := Evidence{Revision: revision, Path: "file", Start: 1, End: len(lines), Quote: tt.text}
+				assert.NilError(t, evidence.validate([]Evidence{ref}, "file", true))
+				ref.Quote = tt.modified
+				assert.ErrorContains(t, evidence.validate([]Evidence{ref}, "file", true), "quote does not match")
+			}
 		})
 	}
 }

@@ -165,6 +165,11 @@ candidate. A valid citation is not proof of a bug; model judgment is still
 required. Prior trusted feedback supports issue-level deduplication. Different
 issues on the same line may both be published.
 
+Verified-mode diff context and file/search results encode source lines as
+`source_json` strings, making tabs and spaces explicit. The model decodes those
+strings when citing evidence; local validation still compares exact source
+bytes. Single-pass source tools retain their existing text format.
+
 Both passes share the 900-second deadline and total allowance of eight turns,
 24 repository calls, and three web searches. Discovery gets at most four turns,
 twelve repository calls and two searches; verification can use the remainder.

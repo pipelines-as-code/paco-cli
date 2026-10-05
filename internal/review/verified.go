@@ -176,7 +176,8 @@ func buildEvidenceContext(parsed *source.Diff, head, before *source.Snapshot) (e
 			for _, line := range hunk.Lines {
 				add("before", file.OldPath, line.OldLine, line.Content, line.Kind == "delete")
 				add("head", file.NewPath, line.NewLine, line.Content, line.Kind == "add")
-				fmt.Fprintf(&numbered, "%s before:%d head:%d |%s\n", line.Kind, line.OldLine, line.NewLine, line.Content)
+				content, _ := json.Marshal(line.Content)
+				fmt.Fprintf(&numbered, "%s before:%d head:%d source_json=%s\n", line.Kind, line.OldLine, line.NewLine, content)
 			}
 		}
 	}

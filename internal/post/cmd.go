@@ -3,6 +3,7 @@ package post
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -100,6 +101,12 @@ func Run(ctx context.Context, opts Options) error {
 		fmt.Printf("Security filter tripped: %s; withholding review.\n", reason)
 		return postSticky(ctx, gh, repo, pr, withheldBody)
 	}
+	if rev.Verified {
+		return postVerified(ctx, ws, gh, repo, pr, rev)
+	}
+	if ws.Exists(review.FileStatus) {
+		return errors.New("verification status exists but review output is not verified; rerun review")
+	}
 
 	summary := rev.Summary
 	if summary == "" {
@@ -121,6 +128,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	failed := ws.Exists(artifact.FileFailed)
+	if failed || mode == "summary" {
+		inlineComments = nil
+	}
 
 	statusEmoji, findingsLine, scoreLine := buildStatusLines(failed, mode, len(inlineComments), rev)
 

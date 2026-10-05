@@ -17,13 +17,24 @@ runs before fetching the current base branch.
 
 Model output is untrusted and is secret-scanned before any GitHub write.
 
-The source snapshot and web results are untrusted too. The model reads
-source only through bounded reads of a snapshot whose commit matches
-the reviewed diff; it cannot run code, run tests, or read other
+The source snapshots and web results are untrusted too. The model reads
+source only through bounded reads of the head and comparison-merge-base
+snapshots tied to the reviewed diff; it cannot run code, run tests, or read other
 workspace files. Archive entries stay in memory, and links and unsafe
 paths are skipped or rejected. The snapshot is redacted for credential
 patterns and the GitHub token when collected, and for model credentials
 when loaded.
+
+Verified review checks source quotes, changed-line references, and
+snapshot/diff consistency before a separate model pass judges each candidate.
+Intermediate model outputs are secret-scanned before reuse. The verifier
+uses the same configured model in a fresh conversation; agreement between
+the passes is not proof of correctness.
+
+The status artifact binds the final review bytes to its PR and head revision.
+It detects stale or mismatched artifacts, not deliberate forgery by an attacker
+who can modify the whole workspace. `post` rechecks the current PR head, but
+GitHub operations are not atomic across summary and inline writes.
 
 ## Redaction
 

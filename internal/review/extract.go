@@ -10,6 +10,8 @@ type Review struct {
 	ReviewScore       ReviewScore `json:"review_score"`
 	SecuritySensitive bool        `json:"security_sensitive"`
 	Comments          []Comment   `json:"comments"`
+	Verified          bool        `json:"verified,omitempty"`
+	SummaryFindings   []Comment   `json:"summary_findings,omitempty"`
 }
 
 type ReviewScore struct {
@@ -106,5 +108,7 @@ func Normalize(r *Review) *Review {
 		},
 		SecuritySensitive: r.SecuritySensitive,
 		Comments:          comments,
+		Verified:          r.Verified,
+		SummaryFindings:   r.SummaryFindings,
 	}
 }

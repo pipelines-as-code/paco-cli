@@ -36,11 +36,14 @@ A missing token or invalid URL is reported as a skip (`.paco-error`).
 | `.valid-lines.json` | `{file: {line: true}}` for added lines |
 | `.existing-inline.json` | `{file: {line: true}}` for lines with existing trusted comments |
 | `.existing-feedback.txt` | Compact digest of existing feedback (max 30KB) |
+| `.existing-feedback.json` | Bounded trusted inline feedback with run-local IDs and availability status |
 | `.head_sha` | HEAD commit SHA |
 | `.paco-error` | Skip reason (written on early exit) |
 | `.tekton/ai/REVIEW.md` | Repository review rules from base branch (if present) |
 | `.toolchain-versions` | Language versions declared on the base branch (if any), one `language<TAB>version<TAB>source` line each |
 | `.paco-source.json` | Redacted text-file snapshot pinned to `.head_sha`, for read-only exploration |
+| `.paco-source-before.json` | Optional comparison-side source snapshot |
+| `.paco-input.json` | Versioned PR/comparison identities, diff digest, and context availability |
 
 The source snapshot is optional. If collection fails or hits a limit,
 `diff` logs a warning and writes none. Any snapshot from an earlier run
@@ -89,6 +92,7 @@ Runs the model review and writes normalized findings.
 | `--no-structured-output` | no | Omit the API response schema (default `true`) |
 | `--no-exploration` | no | Disable repository tools (default `false`) |
 | `--web-search` | no | Allow web search for public library docs (default `true`) |
+| `--verify-findings` | no | Discover and independently verify evidence-backed findings (default `false`) |
 
 The effort is sent as `output_config.effort`. Supported values depend
 on the model (Opus 4.6 accepts `max` but not `xhigh`); an unsupported
@@ -142,6 +146,51 @@ cost extra. Claude is told to search only public package names and
 versions and to cite URLs for findings that rely on web results. Search
 errors fail the review.
 
+### Verified Findings
+
+`--verify-findings` selects discovery followed by a fresh verification
+conversation. Single-pass review remains the default. Summary-only requests
+skip verification and cannot produce inline findings.
+
+Verified mode requires fresh `.paco-input.json` metadata from `diff`. It checks
+the diff digest and head identity, rejects incomplete hunks, and validates
+snapshot lines against overlapping diff lines. Head and before snapshots share
+the retained-source limits. The before revision is the comparison merge base;
+trusted rules come from the target base revision.
+
+Candidates specify a triggering condition, impact, remedy, and exact source
+quotes. Local checks reject invented paths, ranges, quotes and changed-line
+anchors. The verifier looks for counterevidence and returns one decision per
+candidate. A valid citation is not proof of a bug; model judgment is still
+required. Prior trusted feedback supports issue-level deduplication. Different
+issues on the same line may both be published.
+
+Both passes share the 900-second deadline and total allowance of eight turns,
+24 repository calls, and three web searches. Discovery gets at most four turns,
+twelve repository calls and two searches; verification can use the remainder.
+Each response retains the 16,384-output-token limit. Total token cost can
+increase even though call limits are shared. With no viable candidates,
+Paco skips the verifier.
+
+In addition to revision-selectable source reads, `read_diff` exposes bounded
+numbered hunks. Missing before context falls back to the diff and is reported
+as incomplete coverage. Failed tool reads and truncated results also mark the
+run partial. Budget exhaustion, malformed verifier output, provider errors,
+or invalid verifier citations withhold all findings.
+
+`.paco-status.json` records versioned provenance, usage, limitations, candidate
+outcomes and publication counts. Verified `.paco-review.json` output can include
+`summary_findings` for deletion-side findings without an added-line anchor.
+Raw model transcripts are not persisted. Review output, mode, failure,
+security-block and status artifacts are cleared before each review attempt.
+
+`post` requires matching status metadata for verified output, checks the
+repository/PR/head identity, and refuses publication if the PR head changed.
+Deletion-side findings appear in the summary. Publication failure returns an
+error. A saved successful publication count prevents duplicate inline
+submission on a repeat of the same workspace; this does not guarantee
+exactly-once delivery across network failures or different workspaces.
+
 ### Environment
 
 The backend is picked from the environment:
@@ -173,6 +222,7 @@ Other variables:
 | `.paco-mode` | `review` or `summary` |
 | `.paco-failed` | Marker for error/skip path |
 | `.paco-security-block` | Rule name that triggered secret withholding |
+| `.paco-status.json` | Verified-mode identity, output digest, outcomes, limitations and usage |
 
 ### Exit Codes
 
@@ -218,5 +268,5 @@ invalid URL is a fatal error.
 
 | Code | Meaning |
 |---|---|
-| 0 | Success (inline review failure is logged, not fatal) |
+| 0 | Success (legacy inline review failure is logged; verified-mode failure is fatal) |
 | non-zero | Fatal error |

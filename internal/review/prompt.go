@@ -16,6 +16,12 @@ var promptModeReview string
 //go:embed prompts/mode_summary.txt
 var promptModeSummary string
 
+// PromptDigest identifies the prompt set used by a recorded evaluation.
+func PromptDigest() string {
+	return Digest([]byte(promptHeader + promptModeReview + promptModeSummary +
+		systemPrompt + toolSystemPrompt + discoverPrompt + verifyPrompt))
+}
+
 func BuildPrompt(mode, diff, feedback, reviewRules string, toolchains []toolchain.Version) string {
 	prompt := promptHeader
 
@@ -24,7 +30,11 @@ func BuildPrompt(mode, diff, feedback, reviewRules string, toolchains []toolchai
 	} else {
 		prompt += "\n" + promptModeReview
 	}
+	return prompt + buildContext(diff, feedback, reviewRules, toolchains)
+}
 
+func buildContext(diff, feedback, reviewRules string, toolchains []toolchain.Version) string {
+	prompt := ""
 	if feedback != "" {
 		prompt += `
 

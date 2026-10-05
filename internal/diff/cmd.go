@@ -2,11 +2,11 @@ package diff
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
@@ -53,8 +53,15 @@ type Options struct {
 
 func Run(ctx context.Context, opts Options) error {
 	ws := &artifact.Workspace{Dir: opts.Workspace}
-	if err := os.Remove(ws.Path(artifact.FileSource)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("clearing source snapshot: %w", err)
+	for _, name := range []string{
+		artifact.FileSource, artifact.FileSourceBefore, artifact.FileInputManifest, artifact.FileExistingFeedbackJSON,
+		artifact.FileDiff, artifact.FileValidLines, artifact.FileExistingInline, artifact.FileExistingFeedback,
+		artifact.FileHeadSHA, artifact.FileReviewRules, artifact.FileToolchains, artifact.FileError,
+		artifact.FileReview, artifact.FileMode, artifact.FileFailed, artifact.FileSecurityBlock, artifact.FileStatus,
+	} {
+		if err := os.Remove(ws.Path(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("clearing %s: %w", name, err)
+		}
 	}
 	pr := opts.PRNumber
 
@@ -75,14 +82,14 @@ func Run(ctx context.Context, opts Options) error {
 
 	addEyesReaction(ctx, gh, repo, pr, opts.CommentID)
 
-	headSHA, baseRef, err := gh.PullRequestRefs(ctx, repo, pr)
+	refs, err := gh.PullRequestMetadata(ctx, repo, pr)
 	if err != nil {
 		return ws.WriteSkip(fmt.Sprintf("Paco: could not look up pull request #%d on %s.", pr, repo))
 	}
-	if headSHA == "" || baseRef == "" {
+	if refs.HeadSHA == "" || refs.BaseRef == "" {
 		return ws.WriteSkip(fmt.Sprintf("Paco: could not read pull request #%d refs on %s.", pr, repo))
 	}
-	if err := ws.Write(artifact.FileHeadSHA, []byte(headSHA)); err != nil {
+	if err := ws.Write(artifact.FileHeadSHA, []byte(refs.HeadSHA)); err != nil {
 		return err
 	}
 
@@ -98,16 +105,16 @@ func Run(ctx context.Context, opts Options) error {
 		))
 	}
 
-	redactedDiff := security.Redact(rawDiff)
+	redactedDiff := security.Scrub(rawDiff, gh.Token())
 	if err := ws.Write(artifact.FileDiff, []byte(redactedDiff)); err != nil {
 		return err
 	}
 
-	validLines, err := ParseValidLines(strings.NewReader(rawDiff))
+	parsed, err := Parse(redactedDiff)
 	if err != nil {
-		return err
+		return ws.WriteSkip(fmt.Sprintf("Paco: could not parse the pull request diff: %s.", security.Scrub(err.Error(), gh.Token())))
 	}
-	validLinesJSON, err := json.Marshal(validLines)
+	validLinesJSON, err := json.Marshal(ValidLines(parsed))
 	if err != nil {
 		return err
 	}
@@ -115,11 +122,12 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	existingInline, feedbackDigest, err := fetchExistingFeedback(ctx, gh, repo, pr)
+	existingInline, feedbackDigest, structuredFeedback, err := fetchExistingFeedback(ctx, gh, repo, pr, gh.Token())
 	if err != nil {
-		fmt.Printf("Warning: could not fetch existing feedback: %v\n", err)
+		fmt.Printf("Warning: could not fetch existing feedback: %s\n", security.Scrub(err.Error(), gh.Token()))
 		existingInline = []byte("{}")
 		feedbackDigest = ""
+		structuredFeedback = artifact.TrustedFeedback{Version: 1, Status: "unavailable", Comments: []artifact.TrustedComment{}}
 	}
 	if err := ws.Write(artifact.FileExistingInline, existingInline); err != nil {
 		return err
@@ -128,23 +136,115 @@ func Run(ctx context.Context, opts Options) error {
 	if len(feedbackDigest) > maxFeedbackBytes {
 		feedbackDigest = feedbackDigest[:maxFeedbackBytes]
 	}
-	feedbackDigest = security.Redact(feedbackDigest)
+	feedbackDigest = security.Scrub(feedbackDigest, gh.Token())
 	if err := ws.Write(artifact.FileExistingFeedback, []byte(feedbackDigest)); err != nil {
 		return err
 	}
 
-	// Discard optional artifacts from any earlier run before fetching this PR's base.
-	for _, name := range []string{artifact.FileReviewRules, artifact.FileToolchains} {
-		if err := os.Remove(ws.Path(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("clearing %s: %w", name, err)
+	manifest := artifact.InputManifest{
+		Version: 1, Repo: repo.String(), PRNumber: pr, HeadSHA: refs.HeadSHA,
+		TargetBaseSHA: refs.TargetBaseSHA, DiffDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(redactedDiff))),
+		ContextStatus: "complete",
+		Head:          artifact.ContextState{Status: "unavailable"},
+		Before:        artifact.ContextState{Status: "unavailable"},
+	}
+	baseRef := refs.TargetBaseSHA
+	if baseRef == "" {
+		baseRef = refs.BaseRef
+		manifest.Limitations = append(manifest.Limitations, "Target-base SHA is unavailable; trusted rules and toolchains used the base branch.")
+		manifest.Before.Reason = "Target-base SHA is unavailable."
+	} else {
+		manifest.MergeBaseSHA, err = gh.MergeBase(ctx, repo, refs.TargetBaseSHA, refs.HeadSHA)
+		if err != nil {
+			manifest.Before.Reason = security.Scrub(err.Error(), gh.Token())
 		}
 	}
-
 	fetchReviewRules(ctx, gh, repo, baseRef, ws)
 	fetchToolchains(ctx, gh, repo, baseRef, ws)
 
-	if err := fetchSource(ctx, gh, repo, headSHA, ws); err != nil {
-		fmt.Printf("Warning: repository exploration unavailable: %s\n", security.Scrub(err.Error(), gh.Token()))
+	head, headErr := fetchSource(ctx, gh, repo, refs.HeadSHA)
+	if headErr != nil && refs.HeadRepo != "" && refs.HeadRepo != repo.String() {
+		if fork, parseErr := ghclient.ParseRepo(refs.HeadRepo); parseErr == nil {
+			head, headErr = fetchSource(ctx, gh, fork, refs.HeadSHA)
+		}
+	}
+	if headErr != nil {
+		manifest.Head.Reason = security.Scrub(headErr.Error(), gh.Token())
+	}
+	var before *source.Snapshot
+	if manifest.MergeBaseSHA != "" {
+		before, err = fetchSource(ctx, gh, repo, manifest.MergeBaseSHA)
+		if err == nil {
+			err = source.ValidateCombined(head, before)
+		}
+		if err != nil {
+			before = nil
+			manifest.Before.Reason = security.Scrub(err.Error(), gh.Token())
+		}
+	}
+	after, err := gh.PullRequestMetadata(ctx, repo, pr)
+	if err != nil {
+		return ws.WriteSkip("Paco: could not recheck pull request refs after context collection.")
+	}
+	if after != refs {
+		return ws.WriteSkip("Paco: pull request head or base changed during context collection; retry the review.")
+	}
+	encodedFeedback, err := json.Marshal(structuredFeedback)
+	if err != nil {
+		return err
+	}
+	if err := ws.Write(artifact.FileExistingFeedbackJSON, encodedFeedback); err != nil {
+		return err
+	}
+	for _, item := range []struct {
+		snapshot *source.Snapshot
+		name     string
+		state    *artifact.ContextState
+	}{
+		{head, artifact.FileSource, &manifest.Head},
+		{before, artifact.FileSourceBefore, &manifest.Before},
+	} {
+		if item.snapshot == nil {
+			manifest.ContextStatus = "partial"
+			fmt.Printf("Warning: %s context unavailable: %s\n", item.name, item.state.Reason)
+			continue
+		}
+		item.state.Status, item.state.Excluded = "available", item.snapshot.Excluded
+		if item.snapshot.Excluded > 0 {
+			item.state.Status = "partial"
+			manifest.ContextStatus = "partial"
+		}
+		encoded, err := json.Marshal(item.snapshot)
+		if err != nil {
+			return err
+		}
+		if err := ws.Write(item.name, encoded); err != nil {
+			return err
+		}
+	}
+	for _, file := range parsed.Files {
+		if file.Binary {
+			manifest.Limitations = append(manifest.Limitations, "Binary file changes have no text hunk context.")
+			break
+		}
+	}
+	for _, file := range parsed.Files {
+		for _, hunk := range file.Hunks {
+			if !hunk.Complete {
+				manifest.Limitations = append(manifest.Limitations, "A diff hunk is incomplete.")
+				break
+			}
+		}
+	}
+	if len(manifest.Limitations) > 0 {
+		manifest.ContextStatus = "partial"
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	if err := ws.Write(artifact.FileInputManifest, encoded); err != nil {
+		return err
 	}
 
 	fmt.Printf("Existing feedback digest: %d bytes\n", len(feedbackDigest))
@@ -153,27 +253,20 @@ func Run(ctx context.Context, opts Options) error {
 	return nil
 }
 
-func fetchSource(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, headSHA string, ws *artifact.Workspace) error {
+func fetchSource(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, headSHA string) (*source.Snapshot, error) {
 	data, err := gh.SourceArchive(ctx, repo, headSHA)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	snapshot, err := source.FromArchive(data, headSHA, gh.Token())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	encoded, err := json.Marshal(snapshot)
-	if err != nil {
-		return err
-	}
-	if len(encoded) > source.MaxSnapshotBytes {
-		return errors.New("encoded source snapshot exceeds 32 MiB")
-	}
-	if err := ws.Write(artifact.FileSource, encoded); err != nil {
-		return err
+	if err := source.ValidateCombined(snapshot, nil); err != nil {
+		return nil, err
 	}
 	fmt.Printf("Source snapshot: %d files, %d excluded\n", len(snapshot.Files), snapshot.Excluded)
-	return nil
+	return snapshot, nil
 }
 
 func addEyesReaction(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, pr int, commentID string) {
@@ -190,7 +283,7 @@ func fetchReviewRules(ctx context.Context, gh *ghclient.Client, repo ghclient.Re
 		fmt.Printf("No review rules file found at %s:.tekton/ai/REVIEW.md, skipping\n", baseBranch)
 		return
 	}
-	if err := ws.Write(artifact.FileReviewRules, content); err != nil {
+	if err := ws.Write(artifact.FileReviewRules, []byte(security.Scrub(string(content), gh.Token()))); err != nil {
 		fmt.Printf("Warning: could not write review rules: %v\n", err)
 		return
 	}
@@ -226,7 +319,7 @@ func fetchToolchains(ctx context.Context, gh *ghclient.Client, repo ghclient.Rep
 	if len(versions) == 0 {
 		return
 	}
-	if err := ws.Write(artifact.FileToolchains, toolchain.Format(versions)); err != nil {
+	if err := ws.Write(artifact.FileToolchains, []byte(security.Scrub(string(toolchain.Format(versions)), gh.Token()))); err != nil {
 		fmt.Printf("Warning: could not write toolchain versions: %v\n", err)
 		return
 	}

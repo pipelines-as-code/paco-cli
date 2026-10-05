@@ -29,6 +29,13 @@ During review, Claude can read files from the PR-head snapshot and run
 web searches for public library documentation. Pass `--no-exploration`
 or `--web-search=false` to turn these off.
 
+For an evidence-checked second pass, run `paco review --verify-findings`.
+This opt-in mode collects candidate defects, checks their source references,
+then asks a fresh model conversation to accept or reject them. Both passes
+share the normal review limits. Missing context and incomplete verification
+are reported rather than presented as a clean review. It requires artifacts
+from a fresh `paco diff` run; single-pass review remains the default.
+
 The [CLI contract](docs/cli-contract.md) lists every flag, environment
 variable, artifact, and limit.
 

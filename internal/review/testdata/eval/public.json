@@ -1,0 +1,18 @@
+[
+  {
+    "url": "https://github.com/grafana/grafana/pull/76186",
+    "head_sha": "303cdc2caf256aa5df660611120c2e3f7392365d",
+    "target_base_sha": "58ba11ecbd60863e2bfc6e32f0399ed4feb3927a",
+    "source": "https://github.com/withmartian/code-review-benchmark/blob/e616e849755441da38f18bf3adba2c9583b03803/offline/golden_comments/grafana.json",
+    "focus": "Behavior preservation across a logging middleware refactor.",
+    "label_status": "Requires independent adjudication before promotion scoring."
+  },
+  {
+    "url": "https://github.com/grafana/grafana/pull/79265",
+    "head_sha": "bbd8c507cdf56f6b884373809e0b24abd4a2353d",
+    "target_base_sha": "50f4e78a39914711d0d231a501ba215becf17ebc",
+    "source": "https://github.com/withmartian/code-review-benchmark/blob/e616e849755441da38f18bf3adba2c9583b03803/offline/golden_comments/grafana.json",
+    "focus": "Consistency between cache updates and device-limit enforcement.",
+    "label_status": "Requires independent adjudication before promotion scoring."
+  }
+]

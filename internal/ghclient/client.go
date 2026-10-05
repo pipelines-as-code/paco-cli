@@ -129,11 +129,47 @@ func (c *Client) CheckAccess(ctx context.Context, r Repo) error {
 
 // PullRequestRefs returns the head commit SHA and base branch name.
 func (c *Client) PullRequestRefs(ctx context.Context, r Repo, pr int) (headSHA, baseRef string, err error) {
+	refs, err := c.PullRequestMetadata(ctx, r, pr)
+	return refs.HeadSHA, refs.BaseRef, err
+}
+
+type PullRequestMetadata struct {
+	HeadSHA       string
+	TargetBaseSHA string
+	BaseRef       string
+	HeadRepo      string
+}
+
+func (c *Client) PullRequestMetadata(ctx context.Context, r Repo, pr int) (PullRequestMetadata, error) {
 	p, _, err := c.rest.PullRequests.Get(ctx, r.Owner, r.Name, pr)
 	if err != nil {
-		return "", "", err
+		return PullRequestMetadata{}, err
 	}
-	return p.GetHead().GetSHA(), p.GetBase().GetRef(), nil
+	return PullRequestMetadata{
+		HeadSHA: p.GetHead().GetSHA(), TargetBaseSHA: p.GetBase().GetSHA(),
+		BaseRef: p.GetBase().GetRef(), HeadRepo: p.GetHead().GetRepo().GetFullName(),
+	}, nil
+}
+
+// MergeBase uses immutable commit IDs in the base repository's network, including
+// fork PR heads. Per-file patches from this endpoint are deliberately not used.
+func (c *Client) MergeBase(ctx context.Context, r Repo, baseSHA, headSHA string) (string, error) {
+	if baseSHA == "" || headSHA == "" {
+		return "", errors.New("comparison requires base and head commits")
+	}
+	comparison, _, err := c.rest.Repositories.CompareCommits(ctx, r.Owner, r.Name, baseSHA, headSHA,
+		&github.ListOptions{PerPage: 1, Page: 1})
+	if err != nil {
+		return "", err
+	}
+	if comparison.GetBaseCommit().GetSHA() != baseSHA {
+		return "", errors.New("comparison base does not match the requested commit")
+	}
+	mergeBase := comparison.GetMergeBaseCommit().GetSHA()
+	if mergeBase == "" {
+		return "", errors.New("comparison merge base is unavailable")
+	}
+	return mergeBase, nil
 }
 
 // PullRequestDiff returns the unified diff of the pull request.

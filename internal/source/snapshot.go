@@ -1,4 +1,4 @@
-// Package source provides a bounded, read-only view of a PR head snapshot.
+// Package source provides bounded, read-only views of collected PR revisions.
 package source
 
 import (
@@ -104,6 +104,7 @@ func Decode(data []byte, commit string, secrets ...string) (*Snapshot, error) {
 	if len(data) > MaxSnapshotBytes {
 		return nil, errors.New("source snapshot exceeds 32 MiB")
 	}
+
 	var s Snapshot
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("decoding source snapshot: %w", err)
@@ -119,13 +120,44 @@ func Decode(data []byte, commit string, secrets ...string) (*Snapshot, error) {
 		if !safePath(name) || excludedPath(name) || security.ScanSecrets(name, secrets...) != "" || len(content) > maxFileBytes || !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
 			return nil, errors.New("source snapshot contains an invalid file")
 		}
+		content = security.Scrub(content, secrets...)
+		if len(content) > maxFileBytes {
+			return nil, errors.New("redacted source file exceeds 512 KiB")
+		}
 		total += len(content)
 		if total > maxSourceBytes {
 			return nil, errors.New("source snapshot exceeds 16 MiB")
 		}
-		s.Files[name] = security.Scrub(content, secrets...)
+		s.Files[name] = content
 	}
 	return &s, nil
+}
+
+// ValidateCombined applies the original storage limits to both revisions
+// together. Optional before context must not double retained source capacity.
+func ValidateCombined(head, before *Snapshot) error {
+	total, files, encodedTotal := 0, 0, 0
+	for _, snapshot := range []*Snapshot{head, before} {
+		if snapshot == nil {
+			continue
+		}
+		files += len(snapshot.Files)
+		for _, content := range snapshot.Files {
+			total += len(content)
+		}
+		encoded, err := json.Marshal(snapshot)
+		if err != nil {
+			return err
+		}
+		encodedTotal += len(encoded)
+	}
+	if total > maxSourceBytes || files > maxFiles {
+		return errors.New("combined source snapshots exceed 16 MiB or 10000 files")
+	}
+	if encodedTotal > MaxSnapshotBytes {
+		return errors.New("combined encoded source snapshots exceed 32 MiB")
+	}
+	return nil
 }
 
 func safePath(name string) bool {

@@ -106,6 +106,13 @@ func TestDecodeSnapshotRejectsInvalidData(t *testing.T) {
 	}
 }
 
+func TestDecodeBoundsRedactedContent(t *testing.T) {
+	data, err := json.Marshal(&Snapshot{Commit: "sha", Files: map[string]string{"a": strings.Repeat("x", maxFileBytes)}})
+	assert.NilError(t, err)
+	_, err = Decode(data, "sha", "x")
+	assert.ErrorContains(t, err, "redacted source file exceeds")
+}
+
 func TestSourceLimits(t *testing.T) {
 	_, err := Decode(make([]byte, MaxSnapshotBytes+1), "sha")
 	assert.ErrorContains(t, err, "exceeds")

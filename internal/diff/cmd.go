@@ -11,6 +11,7 @@ import (
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
+	"github.com/pipelines-as-code/paco-cli/internal/source"
 	"github.com/pipelines-as-code/paco-cli/internal/toolchain"
 	"github.com/spf13/cobra"
 )
@@ -52,6 +53,9 @@ type Options struct {
 
 func Run(ctx context.Context, opts Options) error {
 	ws := &artifact.Workspace{Dir: opts.Workspace}
+	if err := os.Remove(ws.Path(artifact.FileSource)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clearing source snapshot: %w", err)
+	}
 	pr := opts.PRNumber
 
 	repo, err := ghclient.ParseRepo(opts.Repo)
@@ -150,9 +154,37 @@ func Run(ctx context.Context, opts Options) error {
 	// Detect language versions declared on the base branch
 	fetchToolchains(ctx, gh, repo, baseRef, ws)
 
+	if err := fetchSource(ctx, gh, repo, headSHA, ws); err != nil {
+		fmt.Printf("Warning: repository exploration unavailable: %s\n",
+			security.Redact(strings.ReplaceAll(err.Error(), gh.Token(), "[REDACTED]")))
+	}
+
 	fmt.Printf("Existing feedback digest: %d bytes\n", len(feedbackDigest))
 	fmt.Printf("Diff size: %d bytes\n", len(rawDiff))
 
+	return nil
+}
+
+func fetchSource(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, headSHA string, ws *artifact.Workspace) error {
+	data, err := gh.SourceArchive(ctx, repo, headSHA)
+	if err != nil {
+		return err
+	}
+	snapshot, err := source.FromArchive(data, headSHA, gh.Token())
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > source.MaxSnapshotBytes {
+		return errors.New("encoded source snapshot exceeds 32 MiB")
+	}
+	if err := ws.Write(artifact.FileSource, encoded); err != nil {
+		return err
+	}
+	fmt.Printf("Source snapshot: %d files, %d excluded\n", len(snapshot.Files), snapshot.Excluded)
 	return nil
 }
 

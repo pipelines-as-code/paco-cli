@@ -24,6 +24,15 @@
 - **Model output** is untrusted. It passes through secret scanning
   before any GitHub write.
 
+Repository snapshots and web results are also untrusted. Tools cannot
+execute source code, run tests, or read arbitrary workspace files.
+The model receives source only through bounded reads of a snapshot
+whose commit matches the reviewed diff. Archive entries are held in a
+map rather than extracted; links and unsafe paths are rejected or excluded.
+Credential patterns and the active GitHub token are redacted during
+collection, and model credential literals are redacted when loading
+the snapshot.
+
 ## Redaction
 
 Credential-shaped strings are redacted before writing the diff to the
@@ -61,18 +70,31 @@ Paco runs no subprocesses. It calls two HTTPS APIs directly:
     sent to the configured REST and GraphQL origins.
   - Non-`https` URLs and URLs with embedded credentials are rejected.
   - Redirects to another origin or from `https` to `http` are refused.
+  - Archive retrieval uses the download URL returned by GitHub. The
+    GitHub token is not forwarded to a separate codeload origin, and
+    subsequent cross-origin redirects are refused. Signed download URLs
+    are not printed in errors.
 - Claude, through `internal/model` (anthropic-sdk-go).
   - Credentials are passed explicitly. The SDK does not load
     `ANTHROPIC_BASE_URL`, profile files, or Google application default
     credentials, so the environment cannot redirect review content.
   - Requests are not retried automatically, and the same redirect
     rules apply.
-  - Tool use and extended thinking are never enabled. The model only
-    is asked to return the review JSON. The API enforces its schema
+  - Only read-only snapshot tools and basic web search are exposed.
+    Shells, code execution, dynamic filtering, and extended thinking are
+    disabled. The model is asked to return review JSON. The API enforces its schema
     unless `--no-structured-output` is passed; local parsing,
     normalization, and secret scanning remain enabled in either mode.
 - Errors from both services are scrubbed of the active credentials,
   redacted, and truncated before logging.
+
+Web search is enabled by default. Model-generated queries leave the review
+context for the provider's search service. The system prompt
+prohibits source snippets, credentials, private identifiers, and internal
+URLs in queries. This instruction is not a deterministic data-loss
+prevention filter; set `--web-search=false` for repositories that cannot
+permit that risk. Web pages and repository files cannot grant additional
+tool permissions.
 
 ## Output Limits
 

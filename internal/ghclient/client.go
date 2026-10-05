@@ -112,7 +112,7 @@ type authTransport struct {
 
 func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !t.allowInsecure && req.URL.Scheme != "https" {
-		return nil, fmt.Errorf("refusing non-https request to %s", req.URL.Redacted())
+		return nil, errors.New("refusing non-https request")
 	}
 	if t.origins[httpsafe.Origin(req.URL)] {
 		req = req.Clone(req.Context())

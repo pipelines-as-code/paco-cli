@@ -42,7 +42,9 @@ paco post --repo owner/repo --pr 42 --workspace /workspace/source
 | `--workspace` | all | no | Workspace directory (default `.`) |
 | `--model` | `review` | no | Claude model id (default `claude-opus-4-6@default` on Vertex AI, `claude-opus-4-6` on the Anthropic API) |
 | `--reasoning-effort` | `review` | no | `low`, `medium`, `high`, `xhigh`, or `max` (default `low`); `none` omits the API effort parameter |
-| `--no-structured-output` | `review` | no | Omit the API response schema; JSON parsing and secret checks remain enabled (default `false`) |
+| `--no-structured-output` | `review` | no | Omit the API response schema; JSON parsing and secret checks remain enabled (default `true`) |
+| `--no-exploration` | `review` | no | Disable read-only repository tools (default `false`) |
+| `--web-search` | `review` | no | Search public library documentation (default `true`); disable with `--web-search=false` |
 
 ### Environment Variables
 
@@ -58,6 +60,33 @@ paco post --repo owner/repo --pr 42 --workspace /workspace/source
 | `GOOGLE_CLOUD_PROJECT` | `review` | Vertex AI project ID (default: `project_id` from the service account JSON) |
 | `VERTEX_LOCATION` | `review` | Vertex AI location (default `global`) |
 | `TRIGGER_COMMENT` | `review` | Trigger comment text (determines review vs summary mode) |
+
+## Repository Context and Web Search
+
+`paco diff` saves a bounded source snapshot of the exact PR head.
+During review, Claude can list files, read line ranges, and search for
+callers, definitions, and tests. These tools read the snapshot only;
+they cannot execute commands or access the host filesystem.
+Use `--no-exploration` for a diff-only review.
+
+Repository exploration and basic web search are enabled by default:
+
+```shell
+paco review --workspace /workspace/source
+```
+
+Web search uses the model provider's built-in service, with no extra
+CLI or search API key. It may incur additional charges and must be
+allowed by your provider or Vertex organization policy. Disable it with
+`--web-search=false` where sending model-generated queries to a search
+service is not acceptable. Paco instructs Claude to search public package names
+and versions, without source snippets, private identifiers, or credentials.
+
+To use API-enforced structured outputs instead, pass
+`--web-search=false --no-structured-output=false`.
+
+See the [CLI contract](docs/cli-contract.md#repository-exploration)
+for snapshot and tool-call limits.
 
 ## Integration with Pipelines-as-Code
 

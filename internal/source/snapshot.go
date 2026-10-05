@@ -86,7 +86,7 @@ func FromArchive(data []byte, commit string, secrets ...string) (*Snapshot, erro
 		if _, exists := s.Files[name]; exists {
 			return nil, errors.New("source archive contains duplicate paths")
 		}
-		text := scrub(string(content), secrets)
+		text := security.Scrub(string(content), secrets...)
 		if len(text) > maxFileBytes {
 			s.Excluded++
 			continue
@@ -123,7 +123,7 @@ func Decode(data []byte, commit string, secrets ...string) (*Snapshot, error) {
 		if total > maxSourceBytes {
 			return nil, errors.New("source snapshot exceeds 16 MiB")
 		}
-		s.Files[name] = scrub(content, secrets)
+		s.Files[name] = security.Scrub(content, secrets...)
 	}
 	return &s, nil
 }
@@ -144,13 +144,4 @@ func excludedPath(name string) bool {
 		base == "creds.json" || base == "service-account.json" ||
 		strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") ||
 		strings.HasSuffix(base, ".p12") || strings.HasSuffix(base, ".pfx")
-}
-
-func scrub(text string, secrets []string) string {
-	for _, secret := range secrets {
-		if secret != "" {
-			text = strings.ReplaceAll(text, secret, "[REDACTED]")
-		}
-	}
-	return security.Redact(text)
 }

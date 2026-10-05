@@ -1,6 +1,7 @@
 package security
 
 import (
+	"strings"
 	"testing"
 
 	"gotest.tools/v3/assert"
@@ -53,14 +54,64 @@ func TestRedact(t *testing.T) {
 			want:  "this is clean text with no credentials",
 		},
 		{
+			name:  "JWT prefix without payload is unchanged",
+			input: "eyJ" + strings.Repeat("a", 10) + ".eyJ",
+			want:  "eyJ" + strings.Repeat("a", 10) + ".eyJ",
+		},
+		{
 			name:  "multiple secrets in one string",
 			input: "ghp_ABCDEFGHIJKLMNOPQRSTUV and AKIAIOSFODNN7EXAMPLE both here",
 			want:  "[REDACTED] and [REDACTED] both here",
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, Redact(tt.input), tt.want)
+		})
+	}
+}
+
+func TestScrub(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		literals []string
+		want     string
+	}{
+		{
+			name:     "known literal and credential pattern",
+			input:    "private-value and AKIAIOSFODNN7EXAMPLE",
+			literals: []string{"private-value"},
+			want:     "[REDACTED] and [REDACTED]",
+		},
+		{
+			name:     "literal replaces the whole value before pattern redaction",
+			input:    "AKIAIOSFODNN7EXAMPLE-suffix",
+			literals: []string{"AKIAIOSFODNN7EXAMPLE-suffix"},
+			want:     "[REDACTED]",
+		},
+		{
+			name:     "empty literal is ignored",
+			input:    "clean text",
+			literals: []string{""},
+			want:     "clean text",
+		},
+		{
+			name:  "patterns are redacted without literals",
+			input: "AKIAIOSFODNN7EXAMPLE",
+			want:  "[REDACTED]",
+		},
+		{
+			name:     "every occurrence is redacted",
+			input:    "private-value then private-value",
+			literals: []string{"private-value"},
+			want:     "[REDACTED] then [REDACTED]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, Scrub(tt.input, tt.literals...), tt.want)
 		})
 	}
 }

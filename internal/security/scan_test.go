@@ -85,6 +85,11 @@ func TestScanSecrets(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "JWT prefix without payload is still blocked",
+			text: "eyJ" + strings.Repeat("a", 10) + ".eyJ",
+			want: "jwt-pattern",
+		},
+		{
 			name: "AWS access key",
 			text: "key is AKIAIOSFODNN7EXAMPLE",
 			want: "aws-key-pattern",

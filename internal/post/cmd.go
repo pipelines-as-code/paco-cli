@@ -16,20 +16,28 @@ import (
 
 const marker = "<!-- paco-review -->"
 
-var scoreLabels = []struct {
+type scoreLabel struct {
 	Rating int
+	Word   string
 	Name   string
 	Color  string
-}{
-	{1, "paco/review-trivial", "0e8a16"},
-	{2, "paco/review-easy", "5be3a0"},
-	{3, "paco/review-moderate", "fbca04"},
-	{4, "paco/review-hard", "d93f0b"},
-	{5, "paco/review-very-hard", "b60205"},
 }
 
-var ratingWords = map[int]string{
-	1: "Trivial", 2: "Easy", 3: "Moderate", 4: "Hard", 5: "Very Hard",
+// scoreLabels is indexed by rating-1.
+var scoreLabels = []scoreLabel{
+	{1, "Trivial", "paco/review-trivial", "0e8a16"},
+	{2, "Easy", "paco/review-easy", "5be3a0"},
+	{3, "Moderate", "paco/review-moderate", "fbca04"},
+	{4, "Hard", "paco/review-hard", "d93f0b"},
+	{5, "Very Hard", "paco/review-very-hard", "b60205"},
+}
+
+// labelFor treats an out-of-range rating as moderate.
+func labelFor(rating int) scoreLabel {
+	if rating < 1 || rating > len(scoreLabels) {
+		rating = 3
+	}
+	return scoreLabels[rating-1]
 }
 
 type Options struct {
@@ -66,7 +74,6 @@ func Run(ctx context.Context, opts Options) error {
 	ws := &artifact.Workspace{Dir: opts.Workspace}
 	pr := opts.PRNumber
 
-	// Load and validate artifacts
 	rev, validLines, existingInline, err := loadArtifacts(ws)
 	if err != nil {
 		return err
@@ -83,7 +90,6 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	// Withhold if security block exists
 	if ws.Exists(artifact.FileSecurityBlock) {
 		return postSticky(ctx, gh, repo, pr, withheldBody)
 	}
@@ -100,7 +106,6 @@ func Run(ctx context.Context, opts Options) error {
 		summary = "Paco review completed."
 	}
 
-	// Build inline review payload
 	inlineComments := buildInlineComments(rev.Comments, validLines, existingInline)
 
 	headSHAData, _ := ws.Read(artifact.FileHeadSHA)
@@ -109,7 +114,6 @@ func Run(ctx context.Context, opts Options) error {
 		headSHA = "unknown"
 	}
 
-	// Determine status
 	modeData, _ := ws.Read(artifact.FileMode)
 	mode := strings.TrimSpace(string(modeData))
 	if mode == "" {
@@ -118,7 +122,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	failed := ws.Exists(artifact.FileFailed)
 
-	statusEmoji, findingsLine, scoreLine := buildStatusLines(failed, mode, len(inlineComments), rev, ws)
+	statusEmoji, findingsLine, scoreLine := buildStatusLines(failed, mode, len(inlineComments), rev)
 
 	stickyBody := fmt.Sprintf("%s\n## Paco Review %s\n\n%s\n%s\n%s\n<sub>Reviewed commit: %s</sub>",
 		marker, statusEmoji, summary, scoreLine, findingsLine, headSHA)
@@ -127,17 +131,15 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	// Apply labels
 	if !failed {
 		applyLabels(ctx, gh, repo, pr, rev.ReviewScore.Rating, rev.SecuritySensitive)
 	}
 
-	// Post inline review
 	if len(inlineComments) > 0 {
 		err := gh.CreateReview(ctx, repo, pr, headSHA,
 			"Paco inline comments -- see the Paco Review summary comment for the overview.", inlineComments)
 		if err != nil {
-			fmt.Printf("Inline review failed (scrubbed):\n%s\n", security.Redact(strings.ReplaceAll(err.Error(), gh.Token(), "[REDACTED]")))
+			fmt.Printf("Inline review failed (scrubbed):\n%s\n", security.Scrub(err.Error(), gh.Token()))
 			noteBody := stickyBody + "\n\n> [!NOTE]\n> Some inline comments could not be posted (a line number may fall outside the diff)."
 			_ = postSticky(ctx, gh, repo, pr, noteBody)
 		} else {
@@ -203,7 +205,7 @@ func buildInlineComments(comments []review.Comment, validLines, existingInline m
 	return result
 }
 
-func buildStatusLines(failed bool, mode string, commentCount int, rev *review.Review, ws *artifact.Workspace) (string, string, string) {
+func buildStatusLines(failed bool, mode string, commentCount int, rev *review.Review) (string, string, string) {
 	if failed {
 		return "⚠️", "", ""
 	}
@@ -218,21 +220,15 @@ func buildStatusLines(failed bool, mode string, commentCount int, rev *review.Re
 		findingsLine = fmt.Sprintf("\n%d new inline comment(s) found.\n", commentCount)
 	} else {
 		statusEmoji = "✅"
-		findingsLine = "\nNo new review comments found at this time. Nice work!\n"
+		findingsLine = "\nNo new review findings.\n"
 	}
 
-	rating := rev.ReviewScore.Rating
-	if rating < 1 || rating > 5 {
-		rating = 3
-	}
-	word := ratingWords[rating]
-	scoreLine = fmt.Sprintf("\n**Review difficulty:** %d/5 (%s)", rating, word)
+	label := labelFor(rev.ReviewScore.Rating)
+	scoreLine = fmt.Sprintf("\n**Review difficulty:** %d/5 (%s)", label.Rating, label.Word)
 	if rev.ReviewScore.Reason != "" {
-		scoreLine += " — " + rev.ReviewScore.Reason
+		scoreLine += ": " + rev.ReviewScore.Reason
 	}
 	scoreLine += "\n"
-
-	_ = ws
 	return statusEmoji, findingsLine, scoreLine
 }
 
@@ -259,35 +255,23 @@ func postSticky(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, pr
 
 // applyLabels is best effort: label failures never fail the step.
 func applyLabels(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, pr, rating int, securitySensitive bool) {
-	if rating < 1 || rating > 5 {
-		rating = 3
-	}
-
-	var targetLabel, targetColor string
-	for _, sl := range scoreLabels {
-		if sl.Rating == rating {
-			targetLabel = sl.Name
-			targetColor = sl.Color
-			break
-		}
-	}
-
+	target := labelFor(rating)
 	warn := func(action string, err error) {
 		if err != nil {
 			fmt.Printf("Warning: could not %s: %v\n", action, err)
 		}
 	}
 
-	warn("create label "+targetLabel, gh.EnsureLabel(ctx, repo, targetLabel, targetColor, "Paco review difficulty"))
+	warn("create label "+target.Name, gh.EnsureLabel(ctx, repo, target.Name, target.Color, "Paco review difficulty"))
 
 	for _, sl := range scoreLabels {
-		if sl.Name == targetLabel {
+		if sl.Name == target.Name {
 			continue
 		}
 		warn("remove label "+sl.Name, gh.RemoveLabel(ctx, repo, pr, sl.Name))
 	}
 
-	warn("add label "+targetLabel, gh.AddLabel(ctx, repo, pr, targetLabel))
+	warn("add label "+target.Name, gh.AddLabel(ctx, repo, pr, target.Name))
 
 	if securitySensitive {
 		warn("create label security-review", gh.EnsureLabel(ctx, repo, "security-review", "b60205", "Flagged as security-sensitive by Paco"))

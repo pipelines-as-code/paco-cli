@@ -100,7 +100,7 @@ spec:
           workspaces:
             - name: source
           steps:
-            # Step 1 — Fetch the PR diff and existing feedback.
+            # Step 1: Fetch the PR diff and existing feedback.
             - name: compute-diff
               displayName: "Fetch PR diff via paco"
               image: "$(params.image)"
@@ -117,7 +117,7 @@ spec:
                 - "--comment-id=$(params.comment_id)"
                 - "--workspace=$(workspaces.source.path)"
 
-            # Step 2 — Run the AI review.
+            # Step 2: Run the AI review.
             - name: paco-review
               displayName: "Run Paco review"
               image: "$(params.image)"
@@ -142,7 +142,7 @@ spec:
                 - "--no-structured-output=$(params.no_structured_output)"
                 - "--web-search=$(params.web_search)"
 
-            # Step 3 — Post the review results to the pull request.
+            # Step 3: Post the review results to the pull request.
             - name: post-review
               displayName: "Post review to the pull request"
               image: "$(params.image)"

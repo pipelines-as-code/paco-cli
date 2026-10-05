@@ -51,8 +51,7 @@ func TestExtractReview(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ExtractReview(tt.input)
-			assert.NilError(t, err)
+			result := ExtractReview(tt.input)
 			if tt.wantNil {
 				assert.Assert(t, result == nil, "expected nil result")
 				return

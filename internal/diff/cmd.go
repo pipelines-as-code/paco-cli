@@ -69,15 +69,12 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	// Check GitHub App token access
 	if err := gh.CheckAccess(ctx, repo); err != nil {
 		return ws.WriteSkip(fmt.Sprintf("Paco: the Pipelines-as-Code GitHub App token could not access %s.", repo))
 	}
 
-	// Add eyes reaction
 	addEyesReaction(ctx, gh, repo, pr, opts.CommentID)
 
-	// Get PR refs
 	headSHA, baseRef, err := gh.PullRequestRefs(ctx, repo, pr)
 	if err != nil {
 		return ws.WriteSkip(fmt.Sprintf("Paco: could not look up pull request #%d on %s.", pr, repo))
@@ -89,7 +86,6 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	// Fetch PR diff
 	rawDiff, err := gh.PullRequestDiff(ctx, repo, pr)
 	if err != nil {
 		return ws.WriteSkip(fmt.Sprintf("Paco: could not fetch the diff for pull request #%d.", pr))
@@ -102,13 +98,11 @@ func Run(ctx context.Context, opts Options) error {
 		))
 	}
 
-	// Redact before writing
 	redactedDiff := security.Redact(rawDiff)
 	if err := ws.Write(artifact.FileDiff, []byte(redactedDiff)); err != nil {
 		return err
 	}
 
-	// Parse valid added lines
 	validLines, err := ParseValidLines(strings.NewReader(rawDiff))
 	if err != nil {
 		return err
@@ -121,7 +115,6 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	// Fetch existing feedback
 	existingInline, feedbackDigest, err := fetchExistingFeedback(ctx, gh, repo, pr)
 	if err != nil {
 		fmt.Printf("Warning: could not fetch existing feedback: %v\n", err)
@@ -132,7 +125,6 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	// Cap feedback at 30KB and redact
 	if len(feedbackDigest) > maxFeedbackBytes {
 		feedbackDigest = feedbackDigest[:maxFeedbackBytes]
 	}
@@ -148,15 +140,11 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	// Fetch review rules from base branch
 	fetchReviewRules(ctx, gh, repo, baseRef, ws)
-
-	// Detect language versions declared on the base branch
 	fetchToolchains(ctx, gh, repo, baseRef, ws)
 
 	if err := fetchSource(ctx, gh, repo, headSHA, ws); err != nil {
-		fmt.Printf("Warning: repository exploration unavailable: %s\n",
-			security.Redact(strings.ReplaceAll(err.Error(), gh.Token(), "[REDACTED]")))
+		fmt.Printf("Warning: repository exploration unavailable: %s\n", security.Scrub(err.Error(), gh.Token()))
 	}
 
 	fmt.Printf("Existing feedback digest: %d bytes\n", len(feedbackDigest))

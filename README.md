@@ -1,183 +1,86 @@
 # paco-cli
 
-Go CLI for the Paco AI code reviewer.
-
-Paco reviews GitHub pull requests using an LLM and posts inline
-findings, a summary comment, and review-difficulty labels.
-
-## Subcommands
-
-| Command | Description |
-|---|---|
-| `paco diff` | Fetch PR diff, parse added lines, gather existing feedback |
-| `paco review` | Assemble prompt, run LLM review, extract and normalize findings |
-| `paco post` | Post sticky summary, labels, and inline review to GitHub |
-| `paco version` | Print version, commit, and build date |
+Paco reviews GitHub pull requests with Claude. It posts inline
+findings, a summary comment, and a review-difficulty label.
 
 ## Usage
 
-Each subcommand corresponds to a Tekton step. The shared workspace
-directory holds the artifacts passed between steps.
+Paco runs as three Tekton steps that share a workspace directory:
 
 ```shell
-# Step 1: fetch diff and existing feedback
-paco diff --repo owner/repo --pr 42 --workspace /workspace/source
-
-# Step 2: run AI review
+paco diff   --repo owner/repo --pr 42 --workspace /workspace/source
 paco review --workspace /workspace/source
-
-# Step 3: post results to GitHub
-paco post --repo owner/repo --pr 42 --workspace /workspace/source
+paco post   --repo owner/repo --pr 42 --workspace /workspace/source
 ```
 
-## Flags and Environment
+- `paco diff` fetches the diff, existing feedback, base-branch review
+  rules and toolchain versions, and a source snapshot of the PR head.
+- `paco review` builds the prompt, calls Claude, and normalizes the
+  findings.
+- `paco post` updates the summary comment, labels, and inline review.
+- `paco version` prints the build version.
 
-### Flags
+`diff` and `post` read the GitHub token from `GH_TOKEN` or
+`GITHUB_TOKEN`. `review` uses the Anthropic API when
+`ANTHROPIC_API_KEY` is set, otherwise Vertex AI with
+`GOOGLE_APPLICATION_CREDENTIALS`.
 
-| Flag | Subcommand | Required | Description |
-|---|---|---|---|
-| `--repo` | `diff`, `post` | yes | GitHub repository (`owner/name`) |
-| `--pr` | `diff`, `post` | yes | Pull request number |
-| `--comment-id` | `diff` | no | Trigger comment ID (for eyes reaction) |
-| `--workspace` | all | no | Workspace directory (default `.`) |
-| `--model` | `review` | no | Claude model id (default `claude-opus-4-6@default` on Vertex AI, `claude-opus-4-6` on the Anthropic API) |
-| `--reasoning-effort` | `review` | no | `low`, `medium`, `high`, `xhigh`, or `max` (default `low`); `none` omits the API effort parameter |
-| `--no-structured-output` | `review` | no | Omit the API response schema; JSON parsing and secret checks remain enabled (default `true`) |
-| `--no-exploration` | `review` | no | Disable read-only repository tools (default `false`) |
-| `--web-search` | `review` | no | Search public library documentation (default `true`); disable with `--web-search=false` |
+During review, Claude can read files from the PR-head snapshot and run
+web searches for public library documentation. Pass `--no-exploration`
+or `--web-search=false` to turn these off.
 
-### Environment Variables
+The [CLI contract](docs/cli-contract.md) lists every flag, environment
+variable, artifact, and limit.
 
-| Variable | Subcommand | Description |
-|---|---|---|
-| `GH_TOKEN` | `diff`, `post` | GitHub token |
-| `GITHUB_TOKEN` | `diff`, `post` | GitHub token, used when `GH_TOKEN` is unset |
-| `GITHUB_API_URL` | `diff`, `post` | GitHub REST API base URL for GitHub Enterprise (for example `https://ghe.example.com/api/v3`) |
-| `GH_HOST` | `diff`, `post` | GitHub Enterprise Server or GHE.com hostname, used when `GITHUB_API_URL` is unset |
-| `GITHUB_GRAPHQL_URL` | `diff` | GraphQL endpoint, when it cannot be derived from `GITHUB_API_URL` |
-| `ANTHROPIC_API_KEY` | `review` | Anthropic API key; when set, Paco calls the Anthropic API instead of Vertex AI |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `review` | Path to the Vertex AI service account JSON |
-| `GOOGLE_CLOUD_PROJECT` | `review` | Vertex AI project ID (default: `project_id` from the service account JSON) |
-| `VERTEX_LOCATION` | `review` | Vertex AI location (default `global`) |
-| `TRIGGER_COMMENT` | `review` | Trigger comment text (determines review vs summary mode) |
-
-## Repository Context and Web Search
-
-`paco diff` saves a bounded source snapshot of the exact PR head.
-During review, Claude can list files, read line ranges, and search for
-callers, definitions, and tests. These tools read the snapshot only;
-they cannot execute commands or access the host filesystem.
-Use `--no-exploration` for a diff-only review.
-
-Repository exploration and basic web search are enabled by default:
-
-```shell
-paco review --workspace /workspace/source
-```
-
-Web search uses the model provider's built-in service, with no extra
-CLI or search API key. It may incur additional charges and must be
-allowed by your provider or Vertex organization policy. Disable it with
-`--web-search=false` where sending model-generated queries to a search
-service is not acceptable. Paco instructs Claude to search public package names
-and versions, without source snippets, private identifiers, or credentials.
-
-To use API-enforced structured outputs instead, pass
-`--web-search=false --no-structured-output=false`.
-
-See the [CLI contract](docs/cli-contract.md#repository-exploration)
-for snapshot and tool-call limits.
-
-## Integration with Pipelines-as-Code
-
-Paco is designed to run as a Tekton PipelineRun triggered by
-[Pipelines-as-Code](https://pipelinesascode.com). A full example is
-in [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml).
-
-### Prerequisites
-
-1. **GitHub token** — Pipelines-as-Code provides this automatically
-   via `{{git_auth_secret}}`.
-
-2. **Model credentials**, one of:
-
-   - Vertex AI: a Kubernetes secret with your Google Cloud service
-     account key, used by
-     [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml):
-
-     ```shell
-     kubectl create secret generic paco-vertex-credentials \
-       --from-file=service-account.json=/path/to/service-account.json
-     ```
-
-   - Anthropic API: a Kubernetes secret with your API key, used by
-     [`examples/pipelinerun-anthropic.yaml`](examples/pipelinerun-anthropic.yaml):
-
-     ```shell
-     kubectl create secret generic paco-anthropic-api-key \
-       --from-literal=api-key=sk-ant-...
-     ```
-
-### Setup
+## Pipelines-as-Code setup
 
 1. Copy [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml)
    (Vertex AI) or
    [`examples/pipelinerun-anthropic.yaml`](examples/pipelinerun-anthropic.yaml)
-   (Anthropic API) to `.tekton/paco.yaml` in your repository.
+   (Anthropic API) to `.tekton/paco.yaml` and update the `CHANGEME`
+   values.
 
-2. Update the `CHANGEME` values (image, GCP project, secret names).
+2. Create the model credentials secret:
 
-3. Optionally add review rules at `.tekton/ai/REVIEW.md` — see
-   [`examples/review-rules.md`](examples/review-rules.md) for the
-   format. Paco loads these from the base branch so a PR cannot weaken
-   its own review criteria.
+   ```shell
+   # Vertex AI
+   kubectl create secret generic paco-vertex-credentials \
+     --from-file=service-account.json=/path/to/service-account.json
 
-4. Paco also reads the language versions declared on the base branch
-   (`go.mod`, `.python-version`, `package.json` engines, and similar)
-   and reviews code against them. See the
-   [CLI contract](docs/cli-contract.md#toolchain-detection) for the
-   supported files.
+   # Anthropic API
+   kubectl create secret generic paco-anthropic-api-key \
+     --from-literal=api-key=sk-ant-...
+   ```
 
-### Triggers
+   Pipelines-as-Code provides the GitHub token through
+   `{{git_auth_secret}}`.
 
-| Trigger | Behavior |
-|---|---|
-| PR opened/reopened against `main` | Automatic full review |
-| `/paco review` comment | On-demand full review |
-| `/paco summary` comment | On-demand summary only |
+3. Optionally add review rules at `.tekton/ai/REVIEW.md` (see
+   [`examples/review-rules.md`](examples/review-rules.md)). Paco reads
+   them from the base branch, so a PR cannot weaken its own rules.
 
-## Requirements
-
-Paco is a single static binary. It talks to the GitHub API and to
-Claude (on Vertex AI or the Anthropic API) over HTTPS, so the container
-image only needs `paco` and CA certificates. No shell, `gh`, or other
-CLI is required.
+Paco reviews PRs opened or reopened against `main`. Comment
+`/paco review` for a new review or `/paco summary` for a summary only.
 
 ## Installation
 
-From a [GitHub release](https://github.com/pipelines-as-code/paco-cli/releases):
+Download a [release](https://github.com/pipelines-as-code/paco-cli/releases):
 
 ```shell
 curl -L https://github.com/pipelines-as-code/paco-cli/releases/latest/download/paco_linux_amd64.tar.gz | tar xz -C /usr/local/bin paco
 ```
 
-From source:
+Or build from source with `make build` (output in `bin/paco`).
 
-```shell
-make build
-# binary at bin/paco
-```
+Paco is a static binary. The container image only needs `paco` and CA
+certificates.
 
 ## Documentation
 
-- [CLI contract](docs/cli-contract.md) — inputs, artifacts, exit codes
-- [Security design](docs/security.md) — trust boundaries, redaction, scanning
-- [Development guide](docs/development.md) — build, test, contribute
-
-## Links
-
+- [CLI contract](docs/cli-contract.md): flags, environment, artifacts, exit codes
+- [Security design](docs/security.md): trust boundaries, redaction, scanning
+- [Development guide](docs/development.md): build, test, release
 - [Design issue](https://github.com/tektoncd/pipelines-as-code/issues/2865)
-- [Pipelines-as-Code](https://github.com/openshift-pipelines/pipelines-as-code)
 
 ## License
 

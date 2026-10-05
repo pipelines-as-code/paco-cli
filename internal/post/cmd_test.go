@@ -3,6 +3,7 @@ package post
 import (
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
@@ -129,15 +130,15 @@ func TestBuildInlineCommentsSeverityFormatting(t *testing.T) {
 
 func TestBuildStatusLines(t *testing.T) {
 	tests := []struct {
-		name            string
-		failed          bool
-		mode            string
-		commentCount    int
-		rating          int
-		reason          string
-		wantEmoji       string
-		wantHasFindings bool
-		wantHasScore    bool
+		name         string
+		failed       bool
+		mode         string
+		commentCount int
+		rating       int
+		reason       string
+		wantEmoji    string
+		wantFindings string
+		wantHasScore bool
 	}{
 		{
 			name:      "failed path",
@@ -152,24 +153,24 @@ func TestBuildStatusLines(t *testing.T) {
 			wantEmoji: "\U0001F4DD",
 		},
 		{
-			name:            "review with findings",
-			failed:          false,
-			mode:            "review",
-			commentCount:    3,
-			rating:          4,
-			wantEmoji:       "\U0001F50D",
-			wantHasFindings: true,
-			wantHasScore:    true,
+			name:         "review with findings",
+			failed:       false,
+			mode:         "review",
+			commentCount: 3,
+			rating:       4,
+			wantEmoji:    "\U0001F50D",
+			wantFindings: "\n3 new inline comment(s) found.\n",
+			wantHasScore: true,
 		},
 		{
-			name:            "review no findings",
-			failed:          false,
-			mode:            "review",
-			commentCount:    0,
-			rating:          1,
-			wantEmoji:       "✅",
-			wantHasFindings: true,
-			wantHasScore:    true,
+			name:         "review no findings",
+			failed:       false,
+			mode:         "review",
+			commentCount: 0,
+			rating:       1,
+			wantEmoji:    "✅",
+			wantFindings: "\nNo new review findings.\n",
+			wantHasScore: true,
 		},
 	}
 	for _, tt := range tests {
@@ -177,11 +178,9 @@ func TestBuildStatusLines(t *testing.T) {
 			rev := &review.Review{
 				ReviewScore: review.ReviewScore{Rating: tt.rating, Reason: tt.reason},
 			}
-			emoji, findings, score := buildStatusLines(tt.failed, tt.mode, tt.commentCount, rev, nil)
+			emoji, findings, score := buildStatusLines(tt.failed, tt.mode, tt.commentCount, rev)
 			assert.Equal(t, emoji, tt.wantEmoji)
-			if tt.wantHasFindings {
-				assert.Assert(t, len(findings) > 0, "expected findings line")
-			}
+			assert.Equal(t, findings, tt.wantFindings)
 			if tt.wantHasScore {
 				assert.Assert(t, len(score) > 0, "expected score line")
 			}
@@ -203,9 +202,9 @@ func TestBuildStatusLinesRatingClamping(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rev := &review.Review{ReviewScore: review.ReviewScore{Rating: tt.rating}}
-			_, _, score := buildStatusLines(false, "review", 0, rev, nil)
+			_, _, score := buildStatusLines(false, "review", 0, rev)
 			assert.Assert(t, len(score) > 0)
-			assert.Assert(t, containsString(score, tt.wantWord), "expected %q in score line %q", tt.wantWord, score)
+			assert.Assert(t, strings.Contains(score, tt.wantWord), "expected %q in score line %q", tt.wantWord, score)
 		})
 	}
 }
@@ -270,42 +269,24 @@ func TestLoadArtifactsValidation(t *testing.T) {
 	}
 }
 
-func TestApplyLabelsTargetSelection(t *testing.T) {
+func TestLabelFor(t *testing.T) {
 	tests := []struct {
 		rating int
 		want   string
 	}{
+		{0, "paco/review-moderate"},
 		{1, "paco/review-trivial"},
 		{2, "paco/review-easy"},
 		{3, "paco/review-moderate"},
 		{4, "paco/review-hard"},
 		{5, "paco/review-very-hard"},
+		{6, "paco/review-moderate"},
 	}
 	for _, tt := range tests {
 		t.Run("rating "+strconv.Itoa(tt.rating), func(t *testing.T) {
-			var targetLabel string
-			for _, sl := range scoreLabels {
-				if sl.Rating == tt.rating {
-					targetLabel = sl.Name
-					break
-				}
-			}
-			assert.Equal(t, targetLabel, tt.want)
+			assert.Equal(t, labelFor(tt.rating).Name, tt.want)
 		})
 	}
-}
-
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && searchStr(s, substr)
-}
-
-func searchStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func writeFile(t *testing.T, dir, name, content string) {

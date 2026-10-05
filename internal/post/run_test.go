@@ -83,7 +83,7 @@ func TestRunPostsReview(t *testing.T) {
 	created := f.Calls("POST " + commentsPath)
 	assert.Equal(t, len(created), 1)
 	assert.Equal(t, bodyOf(t, created[0].Body)["body"],
-		marker+"\n## Paco Review \U0001F50D\n\nLooks fine.\n\n**Review difficulty:** 2/5 (Easy) — small\n\n\n1 new inline comment(s) found.\n\n<sub>Reviewed commit: abc123</sub>")
+		marker+"\n## Paco Review \U0001F50D\n\nLooks fine.\n\n**Review difficulty:** 2/5 (Easy): small\n\n\n1 new inline comment(s) found.\n\n<sub>Reviewed commit: abc123</sub>")
 
 	reviews := f.Calls("POST " + reviewsPath)
 	assert.Equal(t, len(reviews), 1)

@@ -1,10 +1,14 @@
 package security
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 var redactPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}`),
 	regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`),
+	// Scanning detects a JWT prefix; redaction consumes the full token.
 	regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_.-]+`),
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
 	regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{20,}`),
@@ -19,4 +23,14 @@ func Redact(s string) string {
 		s = re.ReplaceAllString(s, replacement)
 	}
 	return s
+}
+
+// Scrub replaces known credential literals before applying pattern redaction.
+func Scrub(s string, literals ...string) string {
+	for _, lit := range literals {
+		if lit != "" {
+			s = strings.ReplaceAll(s, lit, replacement)
+		}
+	}
+	return Redact(s)
 }

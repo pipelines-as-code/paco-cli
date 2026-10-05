@@ -1,0 +1,64 @@
+name: Publish Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'pipelines-as-code/paco-cli'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+
+      - name: Set up ko and GHCR authentication
+        uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
+        with:
+          version: v0.19.1
+
+      - name: Build and publish image
+        env:
+          KO_DOCKER_REPO: ghcr.io/pipelines-as-code/paco-cli
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          REVISION: ${{ github.sha }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            tags="$REF_NAME,sha-$REVISION"
+            export PACO_VERSION="$REF_NAME"
+          else
+            tags="latest,sha-$REVISION"
+            export PACO_VERSION="main-$REVISION"
+          fi
+          ko build --bare --tags "$tags" \
+            --image-label "org.opencontainers.image.source=$SOURCE_URL" \
+            --image-label "org.opencontainers.image.revision=$REVISION" \
+            --image-refs "$RUNNER_TEMP/paco-image-refs" \
+            ./cmd/paco
+          {
+            printf 'Published tags: %s\n\n' "$tags"
+            printf 'Image reference:\n\n'
+            cat "$RUNNER_TEMP/paco-image-refs"
+          } >> "$GITHUB_STEP_SUMMARY"

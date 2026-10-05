@@ -158,7 +158,8 @@ These are targets, not measured results or approval to change the default.
 
 ## Releasing
 
-Pushing a tag builds a release with [GoReleaser](https://goreleaser.com/):
+Pushing a tag builds a binary release through the existing Tekton pipeline
+with [GoReleaser](https://goreleaser.com/):
 
 ```shell
 git tag v0.1.0
@@ -170,3 +171,52 @@ Local snapshot build:
 ```shell
 goreleaser build --snapshot --clean
 ```
+
+### Container images
+
+`.github/workflows/publish-image.yaml` uses [ko](https://ko.build/) to
+publish `ghcr.io/pipelines-as-code/paco-cli` for Linux amd64 and arm64.
+It runs on pushes to `main` and `v*` tags, independently of binary releases.
+It does not build or publish images for pull requests.
+
+| Push | Image tags |
+|---|---|
+| `main` | `latest`, `sha-<full-commit>` |
+| `v*` tag | Matching tag, `sha-<full-commit>` |
+
+Release pushes do not change `latest`. The examples track main through
+`latest`; use their `image` parameter to choose a release tag or digest.
+The workflow uses `GITHUB_TOKEN` with `packages: write`, so it needs no
+separate registry secret. After the first publication, a maintainer must
+make the package public if it starts private. Verify an anonymous pull
+before using the examples in another cluster.
+
+`.ko.yaml` builds only `cmd/paco`, uses vendored dependencies, and pins
+the static base image by digest. Update that digest when refreshing the
+base image. `PACO_VERSION` overrides the version embedded in the binary;
+local builds default to `dev-<short-commit>`. The commit and date fields
+identify the source commit.
+
+Build both platforms into a local OCI layout without publishing:
+
+```shell
+KO_DOCKER_REPO=ghcr.io/pipelines-as-code/paco-cli \
+  ko build --bare --push=false --oci-layout-path /tmp/paco-oci ./cmd/paco
+```
+
+With a running Docker daemon, build a local image for your host platform
+and exercise the entrypoint and the command path used by Tekton:
+
+```shell
+ko build --local --platform=linux/amd64 --tags=dev ./cmd/paco
+image=ko.local/github.com/pipelines-as-code/paco-cli/cmd/paco:dev
+docker run --rm "$image" version
+docker run --rm --entrypoint /ko-app/paco "$image" diff --help
+docker run --rm --entrypoint /ko-app/paco "$image" review --help
+docker run --rm --entrypoint /ko-app/paco "$image" post --help
+```
+
+Use `--platform=linux/arm64` on an arm64 host. The image runs as UID
+65532 and needs no shell. Both PipelineRun examples set `fsGroup: 65532`
+to make their shared emptyDir writable; restricted clusters may require
+a different filesystem group.

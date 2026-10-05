@@ -23,6 +23,10 @@ metadata:
     pipelinesascode.tekton.dev/max-keep-runs: "2"
     pipelinesascode.tekton.dev/cancel-in-progress: "true"
 spec:
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        fsGroup: 65532
   params:
     - name: repo_owner
       value: "{{repo_owner}}"
@@ -39,10 +43,9 @@ spec:
       value: "{{ cel: has(body.comment) && has(body.comment.id) ? string(body.comment.id) : '' }}"
     - name: git_auth_secret
       value: "{{git_auth_secret}}"
-    # CHANGEME: any image that ships the paco binary and CA certificates.
-    # paco needs no shell or other tools.
+    # Tracks main. Use a release tag or digest to pin the image.
     - name: image
-      value: "ghcr.io/chmouel/agents-image:latest"
+      value: "ghcr.io/pipelines-as-code/paco-cli:latest"
     # Optional: Claude model id. Empty means claude-opus-4-6.
     - name: model
       value: ""
@@ -73,7 +76,7 @@ spec:
         default: ""
       - name: git_auth_secret
       - name: image
-        default: "ghcr.io/chmouel/agents-image:latest"
+        default: "ghcr.io/pipelines-as-code/paco-cli:latest"
       - name: model
         default: ""
       - name: reasoning_effort
@@ -98,13 +101,14 @@ spec:
             - name: compute-diff
               displayName: "Fetch PR diff via paco"
               image: "$(params.image)"
+              imagePullPolicy: Always
               env:
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef:
                       name: "$(params.git_auth_secret)"
                       key: "git-provider-token"
-              command: ["paco", "diff"]
+              command: ["/ko-app/paco", "diff"]
               args:
                 - "--repo=$(params.repo_owner)/$(params.repo_name)"
                 - "--pr=$(params.pull_request_number)"
@@ -115,6 +119,7 @@ spec:
             - name: paco-review
               displayName: "Run Paco review"
               image: "$(params.image)"
+              imagePullPolicy: Always
               env:
                 - name: ANTHROPIC_API_KEY
                   valueFrom:
@@ -123,7 +128,7 @@ spec:
                       key: "$(params.anthropic_secret_key)"
                 - name: TRIGGER_COMMENT
                   value: "$(params.trigger_comment)"
-              command: ["paco", "review"]
+              command: ["/ko-app/paco", "review"]
               args:
                 - "--workspace=$(workspaces.source.path)"
                 - "--model=$(params.model)"
@@ -136,13 +141,14 @@ spec:
             - name: post-review
               displayName: "Post review to the pull request"
               image: "$(params.image)"
+              imagePullPolicy: Always
               env:
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef:
                       name: "$(params.git_auth_secret)"
                       key: "git-provider-token"
-              command: ["paco", "post"]
+              command: ["/ko-app/paco", "post"]
               args:
                 - "--repo=$(params.repo_owner)/$(params.repo_name)"
                 - "--pr=$(params.pull_request_number)"

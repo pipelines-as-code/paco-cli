@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
-	"github.com/pipelines-as-code/paco-cli/internal/command"
+	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
 	"github.com/pipelines-as-code/paco-cli/internal/review"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
 	"github.com/spf13/cobra"
@@ -35,10 +34,13 @@ var ratingWords = map[int]string{
 
 type Options struct {
 	Repo      string
-	PRNumber  string
+	PRNumber  int
 	Workspace string
-	Runner    command.Runner
+	// GitHub is the API client; nil builds one from the environment.
+	GitHub *ghclient.Client
 }
+
+const withheldBody = marker + "\n## Paco Review \U0001F6AB\n\nPaco review withheld: the model output tripped a security filter (possible prompt injection). Maintainers can check the PipelineRun logs for details."
 
 func Command() *cobra.Command {
 	var opts Options
@@ -47,13 +49,12 @@ func Command() *cobra.Command {
 		Use:   "post",
 		Short: "Post review results to the pull request",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts.Runner = &command.ExecRunner{}
 			return Run(cmd.Context(), opts)
 		},
 	}
 
 	cmd.Flags().StringVar(&opts.Repo, "repo", "", "GitHub repository (owner/name)")
-	cmd.Flags().StringVar(&opts.PRNumber, "pr", "", "Pull request number")
+	cmd.Flags().IntVar(&opts.PRNumber, "pr", 0, "Pull request number")
 	cmd.Flags().StringVar(&opts.Workspace, "workspace", ".", "Workspace directory for artifacts")
 	_ = cmd.MarkFlagRequired("repo")
 	_ = cmd.MarkFlagRequired("pr")
@@ -63,8 +64,6 @@ func Command() *cobra.Command {
 
 func Run(ctx context.Context, opts Options) error {
 	ws := &artifact.Workspace{Dir: opts.Workspace}
-	runner := opts.Runner
-	repo := opts.Repo
 	pr := opts.PRNumber
 
 	// Load and validate artifacts
@@ -73,18 +72,27 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	// Withhold if security block exists
-	if ws.Exists(artifact.FileSecurityBlock) {
-		return postSticky(ctx, runner, repo, pr, marker+"\n## Paco Review \U0001F6AB\n\nPaco review withheld: the model output tripped a security filter (possible prompt injection). Maintainers can check the PipelineRun logs for details.")
+	repo, err := ghclient.ParseRepo(opts.Repo)
+	if err != nil {
+		return err
+	}
+	gh := opts.GitHub
+	if gh == nil {
+		if gh, err = ghclient.FromEnv(); err != nil {
+			return fmt.Errorf("configuring GitHub access: %w", err)
+		}
 	}
 
-	// Belt-and-braces rescan with this step's own GH_TOKEN
+	// Withhold if security block exists
+	if ws.Exists(artifact.FileSecurityBlock) {
+		return postSticky(ctx, gh, repo, pr, withheldBody)
+	}
+
+	// Belt-and-braces rescan with this step's own GitHub token
 	reviewData, _ := ws.Read(artifact.FileReview)
-	reviewText := string(reviewData)
-	ghToken := os.Getenv("GH_TOKEN")
-	if reason := security.ScanSecrets(reviewText, ghToken); reason != "" {
+	if reason := security.ScanSecrets(string(reviewData), gh.Token()); reason != "" {
 		fmt.Printf("Security filter tripped: %s; withholding review.\n", reason)
-		return postSticky(ctx, runner, repo, pr, marker+"\n## Paco Review \U0001F6AB\n\nPaco review withheld: the model output tripped a security filter (possible prompt injection). Maintainers can check the PipelineRun logs for details.")
+		return postSticky(ctx, gh, repo, pr, withheldBody)
 	}
 
 	summary := rev.Summary
@@ -115,36 +123,23 @@ func Run(ctx context.Context, opts Options) error {
 	stickyBody := fmt.Sprintf("%s\n## Paco Review %s\n\n%s\n%s\n%s\n<sub>Reviewed commit: %s</sub>",
 		marker, statusEmoji, summary, scoreLine, findingsLine, headSHA)
 
-	if err := postSticky(ctx, runner, repo, pr, stickyBody); err != nil {
+	if err := postSticky(ctx, gh, repo, pr, stickyBody); err != nil {
 		return err
 	}
 
 	// Apply labels
 	if !failed {
-		applyLabels(ctx, runner, repo, pr, rev.ReviewScore.Rating, rev.SecuritySensitive)
+		applyLabels(ctx, gh, repo, pr, rev.ReviewScore.Rating, rev.SecuritySensitive)
 	}
 
 	// Post inline review
 	if len(inlineComments) > 0 {
-		payload := map[string]interface{}{
-			"commit_id": headSHA,
-			"body":      "Paco inline comments -- see the Paco Review summary comment for the overview.",
-			"event":     "COMMENT",
-			"comments":  inlineComments,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-
-		result, err := runner.Run(ctx, "gh", []string{
-			"api", "--method", "POST",
-			fmt.Sprintf("repos/%s/pulls/%s/reviews", repo, pr),
-			"--input", "-",
-		}, nil, payloadJSON)
-
-		if err != nil || result.ExitCode != 0 {
-			stderr := security.Redact(string(result.Stderr))
-			fmt.Printf("Inline review failed; gh api output (scrubbed):\n%s\n", stderr)
+		err := gh.CreateReview(ctx, repo, pr, headSHA,
+			"Paco inline comments -- see the Paco Review summary comment for the overview.", inlineComments)
+		if err != nil {
+			fmt.Printf("Inline review failed (scrubbed):\n%s\n", security.Redact(strings.ReplaceAll(err.Error(), gh.Token(), "[REDACTED]")))
 			noteBody := stickyBody + "\n\n> [!NOTE]\n> Some inline comments could not be posted (a line number may fall outside the diff)."
-			_ = postSticky(ctx, runner, repo, pr, noteBody)
+			_ = postSticky(ctx, gh, repo, pr, noteBody)
 		} else {
 			fmt.Printf("Posted %d new inline comment(s)\n", len(inlineComments))
 		}
@@ -181,8 +176,8 @@ func loadArtifacts(ws *artifact.Workspace) (*review.Review, map[string]map[strin
 	return &rev, validLines, existingInline, nil
 }
 
-func buildInlineComments(comments []review.Comment, validLines, existingInline map[string]map[string]bool) []map[string]interface{} {
-	var result []map[string]interface{}
+func buildInlineComments(comments []review.Comment, validLines, existingInline map[string]map[string]bool) []ghclient.ReviewComment {
+	var result []ghclient.ReviewComment
 	for _, c := range comments {
 		if c.Path == "" || c.Line == 0 || c.Body == "" {
 			continue
@@ -198,11 +193,11 @@ func buildInlineComments(comments []review.Comment, validLines, existingInline m
 		if sev == "" {
 			sev = "medium"
 		}
-		result = append(result, map[string]interface{}{
-			"path": c.Path,
-			"line": c.Line,
-			"side": "RIGHT",
-			"body": fmt.Sprintf("**[%s]** %s", strings.ToUpper(sev), c.Body),
+		result = append(result, ghclient.ReviewComment{
+			Path: c.Path,
+			Line: c.Line,
+			Side: "RIGHT",
+			Body: fmt.Sprintf("**[%s]** %s", strings.ToUpper(sev), c.Body),
 		})
 	}
 	return result
@@ -241,48 +236,29 @@ func buildStatusLines(failed bool, mode string, commentCount int, rev *review.Re
 	return statusEmoji, findingsLine, scoreLine
 }
 
-func postSticky(ctx context.Context, runner command.Runner, repo, pr, body string) error {
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid repo format: %s", repo)
+func postSticky(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, pr int, body string) error {
+	comments, err := gh.IssueComments(ctx, repo, pr)
+	if err != nil {
+		return fmt.Errorf("listing pull request comments: %w", err)
 	}
-
-	result, err := runner.Run(ctx, "gh", []string{
-		"api", "--paginate",
-		fmt.Sprintf("repos/%s/issues/%s/comments", repo, pr),
-		"--jq", `[.[] | select(.body | contains("<!-- paco-review -->"))][0].id // empty`,
-	}, nil, nil)
-
-	var commentID string
-	if err == nil && result.ExitCode == 0 {
-		commentID = strings.TrimSpace(string(result.Stdout))
-	}
-
-	if commentID != "" {
-		_, err = runner.Run(ctx, "gh", []string{
-			"api", "-X", "PATCH",
-			fmt.Sprintf("repos/%s/issues/comments/%s", repo, commentID),
-			"-f", "body=" + body,
-		}, nil, nil)
-		if err != nil {
-			return err
+	for _, c := range comments {
+		if strings.Contains(c.Body, marker) {
+			if err := gh.UpdateComment(ctx, repo, c.ID, body); err != nil {
+				return fmt.Errorf("updating the Paco summary comment: %w", err)
+			}
+			fmt.Println("Updated Paco summary comment")
+			return nil
 		}
-		fmt.Println("Updated Paco summary comment")
-	} else {
-		_, err = runner.Run(ctx, "gh", []string{
-			"api",
-			fmt.Sprintf("repos/%s/issues/%s/comments", repo, pr),
-			"-f", "body=" + body,
-		}, nil, nil)
-		if err != nil {
-			return err
-		}
-		fmt.Println("Created Paco summary comment")
 	}
+	if err := gh.CreateComment(ctx, repo, pr, body); err != nil {
+		return fmt.Errorf("creating the Paco summary comment: %w", err)
+	}
+	fmt.Println("Created Paco summary comment")
 	return nil
 }
 
-func applyLabels(ctx context.Context, runner command.Runner, repo, pr string, rating int, securitySensitive bool) {
+// applyLabels is best effort: label failures never fail the step.
+func applyLabels(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, pr, rating int, securitySensitive bool) {
 	if rating < 1 || rating > 5 {
 		rating = 3
 	}
@@ -296,43 +272,25 @@ func applyLabels(ctx context.Context, runner command.Runner, repo, pr string, ra
 		}
 	}
 
-	// Ensure label exists
-	_, _ = runner.Run(ctx, "gh", []string{
-		"label", "create", targetLabel,
-		"--color", targetColor,
-		"--description", "Paco review difficulty",
-		"--force", "-R", repo,
-	}, nil, nil)
+	warn := func(action string, err error) {
+		if err != nil {
+			fmt.Printf("Warning: could not %s: %v\n", action, err)
+		}
+	}
 
-	// Remove other score labels
+	warn("create label "+targetLabel, gh.EnsureLabel(ctx, repo, targetLabel, targetColor, "Paco review difficulty"))
+
 	for _, sl := range scoreLabels {
 		if sl.Name == targetLabel {
 			continue
 		}
-		_, _ = runner.Run(ctx, "gh", []string{
-			"pr", "edit", pr, "-R", repo,
-			"--remove-label", sl.Name,
-		}, nil, nil)
+		warn("remove label "+sl.Name, gh.RemoveLabel(ctx, repo, pr, sl.Name))
 	}
 
-	// Add target label
-	_, _ = runner.Run(ctx, "gh", []string{
-		"pr", "edit", pr, "-R", repo,
-		"--add-label", targetLabel,
-	}, nil, nil)
-
-	// Security review label
-	_, _ = runner.Run(ctx, "gh", []string{
-		"label", "create", "security-review",
-		"--color", "b60205",
-		"--description", "Flagged as security-sensitive by Paco",
-		"--force", "-R", repo,
-	}, nil, nil)
+	warn("add label "+targetLabel, gh.AddLabel(ctx, repo, pr, targetLabel))
 
 	if securitySensitive {
-		_, _ = runner.Run(ctx, "gh", []string{
-			"pr", "edit", pr, "-R", repo,
-			"--add-label", "security-review",
-		}, nil, nil)
+		warn("create label security-review", gh.EnsureLabel(ctx, repo, "security-review", "b60205", "Flagged as security-sensitive by Paco"))
+		warn("add label security-review", gh.AddLabel(ctx, repo, pr, "security-review"))
 	}
 }

@@ -7,6 +7,7 @@ var redactPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`),
 	regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_.-]+`),
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{20,}`),
 	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
 	regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com`),
 }

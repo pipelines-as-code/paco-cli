@@ -35,6 +35,7 @@ workspace and before logging any output. Patterns:
 - AWS access keys: `AKIA` prefixed
 - GCP service account emails: `*@*.iam.gserviceaccount.com`
 - PEM private key headers
+- Anthropic API keys: `sk-ant-` prefixed
 
 ## Secret Scanning
 
@@ -45,19 +46,33 @@ pattern is found:
 2. The post step sees the block and posts a withhold notice
 3. No inline comments are posted
 
-The post step rescans independently using its own `GH_TOKEN` as an
-extra literal match (belt-and-braces).
+The review step also scans for its active model credentials (the
+Anthropic API key or the service-account email). The post step
+rescans independently using its own GitHub token as an extra literal
+match (belt-and-braces).
 
-## Subprocess Execution
+## External Services
 
-- All external commands (`gh`, `opencode`) run through the
-  `command.Runner` interface with separate arguments — never via
-  `sh -c`.
-- `opencode` runs with a sanitized environment (`env -i` equivalent):
-  only `HOME`, `PATH`, `TERM`, `NO_COLOR`, and Vertex credentials
-  are passed.
-- All tools are denied in the OpenCode config (`permission: deny`).
-- Model output is bounded and redacted before logging.
+Paco runs no subprocesses. It calls two HTTPS APIs directly:
+
+- GitHub, through `internal/ghclient` (go-github for REST, one
+  GraphQL query for review threads).
+  - The token is read from `GH_TOKEN` or `GITHUB_TOKEN` and is only
+    sent to the configured REST and GraphQL origins.
+  - Non-`https` URLs and URLs with embedded credentials are rejected.
+  - Redirects to another origin or from `https` to `http` are refused.
+- Claude, through `internal/model` (anthropic-sdk-go).
+  - Credentials are passed explicitly. The SDK does not load
+    `ANTHROPIC_BASE_URL`, profile files, or Google application default
+    credentials, so the environment cannot redirect review content.
+  - Requests are not retried automatically, and the same redirect
+    rules apply.
+  - Tool use and extended thinking are never enabled. The model only
+    is asked to return the review JSON. The API enforces its schema
+    unless `--no-structured-output` is passed; local parsing,
+    normalization, and secret scanning remain enabled in either mode.
+- Errors from both services are scrubbed of the active credentials,
+  redacted, and truncated before logging.
 
 ## Output Limits
 

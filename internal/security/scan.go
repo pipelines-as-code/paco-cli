@@ -15,6 +15,7 @@ var scanRules = []ScanRule{
 	{Name: "github-pat-pattern", Pattern: regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`)},
 	{Name: "jwt-pattern", Pattern: regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.eyJ`)},
 	{Name: "aws-key-pattern", Pattern: regexp.MustCompile(`AKIA[0-9A-Z]{16}`)},
+	{Name: "anthropic-key-pattern", Pattern: regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{20,}`)},
 	{Name: "google-service-account-pattern", Pattern: regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com`)},
 	{Name: "private-key-pattern", Pattern: regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)},
 }

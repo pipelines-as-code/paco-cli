@@ -3,14 +3,15 @@ package review
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
-	"github.com/pipelines-as-code/paco-cli/internal/command"
+	"github.com/pipelines-as-code/paco-cli/internal/model"
 	"gotest.tools/v3/assert"
 )
 
@@ -22,12 +23,32 @@ func writeFakeCredentials(t *testing.T) string {
 	return credFile
 }
 
-func setupFakeOpencode(t *testing.T, script string) {
+type fakeClient struct {
+	text  string
+	err   error
+	calls int
+	got   model.Request
+}
+
+func (f *fakeClient) Complete(_ context.Context, req model.Request) (model.Result, error) {
+	f.calls++
+	f.got = req
+	return model.Result{Text: f.text}, f.err
+}
+
+func fakeResolve(f *fakeClient, secrets ...string) func(context.Context) (*model.Resolved, error) {
+	return func(context.Context) (*model.Resolved, error) {
+		return &model.Resolved{Client: f, Backend: "fake", DefaultModel: "default-model", Secrets: secrets}, nil
+	}
+}
+
+func readReview(t *testing.T, ws string) Review {
 	t.Helper()
-	binDir := t.TempDir()
-	path := filepath.Join(binDir, "opencode")
-	assert.NilError(t, os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755))
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	data, err := os.ReadFile(filepath.Join(ws, artifact.FileReview))
+	assert.NilError(t, err)
+	var review Review
+	assert.NilError(t, json.Unmarshal(data, &review))
+	return review
 }
 
 func setupWorkspaceWithDiff(t *testing.T, diff string) string {
@@ -45,96 +66,83 @@ func fileExists(path string) bool {
 func TestRunEarlyExit(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func(t *testing.T) (string, string)
-		wantFailed  bool
+		setup       func(t *testing.T) string
 		wantSummary string
 	}{
 		{
 			name: "skips when error file exists",
-			setup: func(t *testing.T) (string, string) {
+			setup: func(t *testing.T) string {
 				t.Helper()
 				ws := t.TempDir()
 				assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileError), []byte("skip reason"), 0o600))
-				credFile := writeFakeCredentials(t)
-				return ws, credFile
+				t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", writeFakeCredentials(t))
+				return ws
 			},
-			wantFailed:  true,
 			wantSummary: "skip reason",
 		},
 		{
 			name: "skips when diff is empty",
-			setup: func(t *testing.T) (string, string) {
+			setup: func(t *testing.T) string {
 				t.Helper()
-				ws := setupWorkspaceWithDiff(t, "")
-				credFile := writeFakeCredentials(t)
-				return ws, credFile
+				t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", writeFakeCredentials(t))
+				return setupWorkspaceWithDiff(t, "")
 			},
-			wantFailed:  true,
 			wantSummary: "No reviewable changes found in this diff.",
 		},
 		{
-			name: "fails with missing credentials env",
-			setup: func(t *testing.T) (string, string) {
+			name: "fails with no backend configured",
+			setup: func(t *testing.T) string {
 				t.Helper()
-				ws := setupWorkspaceWithDiff(t, "some diff")
-				return ws, ""
+				return setupWorkspaceWithDiff(t, "some diff")
 			},
-			wantFailed: true,
+			wantSummary: "Paco: neither ANTHROPIC_API_KEY nor GOOGLE_APPLICATION_CREDENTIALS is set.",
 		},
 		{
 			name: "fails with unreadable credentials file",
-			setup: func(t *testing.T) (string, string) {
+			setup: func(t *testing.T) string {
 				t.Helper()
-				ws := setupWorkspaceWithDiff(t, "some diff")
-				credFile := filepath.Join(t.TempDir(), "nonexistent", "creds.json")
-				return ws, credFile
+				t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "nonexistent", "creds.json"))
+				return setupWorkspaceWithDiff(t, "some diff")
 			},
-			wantFailed: true,
+			wantSummary: "Paco: could not read the Vertex AI credentials file",
 		},
 		{
 			name: "fails with invalid credentials JSON",
-			setup: func(t *testing.T) (string, string) {
+			setup: func(t *testing.T) string {
 				t.Helper()
-				ws := setupWorkspaceWithDiff(t, "some diff")
 				credFile := filepath.Join(t.TempDir(), "bad.json")
 				assert.NilError(t, os.WriteFile(credFile, []byte(`{"not":"valid"}`), 0o600))
-				return ws, credFile
+				t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
+				return setupWorkspaceWithDiff(t, "some diff")
 			},
-			wantFailed: true,
+			wantSummary: "Paco: the Vertex AI credentials file is missing required fields (client_email or private_key).",
 		},
 		{
 			name: "fails with no project configured",
-			setup: func(t *testing.T) (string, string) {
+			setup: func(t *testing.T) string {
 				t.Helper()
-				ws := setupWorkspaceWithDiff(t, "some diff")
 				credFile := filepath.Join(t.TempDir(), "creds.json")
 				assert.NilError(t, os.WriteFile(credFile, []byte(`{"client_email":"a@b.com","private_key":"k"}`), 0o600))
-				t.Setenv("GOOGLE_CLOUD_PROJECT", "")
-				return ws, credFile
+				t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
+				return setupWorkspaceWithDiff(t, "some diff")
 			},
-			wantFailed: true,
+			wantSummary: "Paco: no Vertex AI project was configured or found in the service-account credentials.",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ws, credFile := tt.setup(t)
-			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
-			if credFile != "" {
-				t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
-			}
+			t.Setenv("ANTHROPIC_API_KEY", "")
+			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+			t.Setenv("GOOGLE_CLOUD_PROJECT", "")
+			ws := tt.setup(t)
 
-			err := Run(context.Background(), Options{Workspace: ws, Runner: &command.ExecRunner{}})
+			err := Run(context.Background(), Options{Workspace: ws})
 			assert.NilError(t, err)
 
-			if tt.wantFailed {
-				assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileFailed)))
-			}
-			if tt.wantSummary != "" {
-				data, _ := os.ReadFile(filepath.Join(ws, artifact.FileReview))
-				var review Review
-				assert.NilError(t, json.Unmarshal(data, &review))
-				assert.Equal(t, review.Summary, tt.wantSummary)
-			}
+			assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileFailed)))
+			assert.Assert(t, !fileExists(filepath.Join(ws, artifact.FileMode)), "mode must not be written on early exit")
+			summary := readReview(t, ws).Summary
+			assert.Assert(t, strings.HasPrefix(summary, tt.wantSummary), "got summary %q", summary)
 		})
 	}
 }
@@ -154,15 +162,12 @@ func TestRunModeDetection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := setupWorkspaceWithDiff(t, "some diff")
-			credFile := writeFakeCredentials(t)
-			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
-			t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
-			setupFakeOpencode(t, `echo '{"summary":"ok","comments":[]}'`)
+			fc := &fakeClient{text: `{"summary":"ok","comments":[]}`}
 
 			err := Run(context.Background(), Options{
 				Workspace:      ws,
 				TriggerComment: tt.comment,
-				Runner:         &command.ExecRunner{},
+				Resolve:        fakeResolve(fc),
 			})
 			assert.NilError(t, err)
 
@@ -175,7 +180,7 @@ func TestRunModeDetection(t *testing.T) {
 func TestRunModelOutput(t *testing.T) {
 	tests := []struct {
 		name              string
-		opencodeOutput    string
+		output            string
 		wantFailed        bool
 		wantSecurityBlock bool
 		wantSummary       string
@@ -185,7 +190,7 @@ func TestRunModelOutput(t *testing.T) {
 	}{
 		{
 			name:             "successful review with findings",
-			opencodeOutput:   `{"summary":"found issues","review_score":{"rating":2,"reason":"small"},"comments":[{"path":"a.go","line":1,"severity":"high","body":"bug"}]}`,
+			output:           `{"summary":"found issues","review_score":{"rating":2,"reason":"small"},"comments":[{"path":"a.go","line":1,"severity":"high","body":"bug"}]}`,
 			wantSummary:      "found issues",
 			wantCommentCount: 1,
 			wantRating:       2,
@@ -193,118 +198,144 @@ func TestRunModelOutput(t *testing.T) {
 		},
 		{
 			name:             "successful review no findings",
-			opencodeOutput:   `{"summary":"looks good","comments":[]}`,
+			output:           `{"summary":"looks good","comments":[]}`,
 			wantSummary:      "looks good",
 			wantCommentCount: 0,
 		},
 		{
 			name:              "security block on leaked github token",
-			opencodeOutput:    `{"summary":"ghp_ABCDEFghijklmnopqrstuvwx leaked","comments":[]}`,
+			output:            `{"summary":"ghp_ABCDEFghijklmnopqrstuvwx leaked","comments":[]}`,
 			wantSecurityBlock: true,
 		},
 		{
-			name:              "security block on service account literal",
-			opencodeOutput:    `{"summary":"test@proj.iam.gserviceaccount.com in output","comments":[]}`,
+			name:              "security block on credential literal",
+			output:            `{"summary":"the literal top-secret-value appears","comments":[]}`,
 			wantSecurityBlock: true,
 		},
 		{
-			name:           "unparsable model output",
-			opencodeOutput: "not json at all",
-			wantFailed:     true,
+			name:              "security block on anthropic key",
+			output:            `{"summary":"sk-ant-api03-ABCDEFGHIJ_klmnopqrst-uvw","comments":[]}`,
+			wantSecurityBlock: true,
 		},
 		{
-			name:           "JSON without comments field",
-			opencodeOutput: `{"summary":"no comments array"}`,
-			wantFailed:     true,
+			name:       "unparsable model output",
+			output:     "not json at all",
+			wantFailed: true,
+		},
+		{
+			name:       "JSON without comments field",
+			output:     `{"summary":"no comments array"}`,
+			wantFailed: true,
 		},
 		{
 			name:             "rating clamped to max 5",
-			opencodeOutput:   `{"summary":"test","review_score":{"rating":99},"comments":[{"path":"a.go","line":1,"severity":"low","body":"ok"}]}`,
+			output:           `{"summary":"test","review_score":{"rating":99},"comments":[{"path":"a.go","line":1,"severity":"low","body":"ok"}]}`,
 			wantCommentCount: 1,
 			wantRating:       5,
 		},
 		{
 			name:             "rating clamped to min 1",
-			opencodeOutput:   `{"summary":"test","review_score":{"rating":-5},"comments":[{"path":"a.go","line":1,"severity":"low","body":"ok"}]}`,
+			output:           `{"summary":"test","review_score":{"rating":-5},"comments":[{"path":"a.go","line":1,"severity":"low","body":"ok"}]}`,
 			wantCommentCount: 1,
 			wantRating:       1,
 		},
 		{
 			name:             "unknown severity becomes medium",
-			opencodeOutput:   `{"summary":"test","comments":[{"path":"a.go","line":1,"severity":"EXTREME","body":"issue"}]}`,
+			output:           `{"summary":"test","comments":[{"path":"a.go","line":1,"severity":"EXTREME","body":"issue"}]}`,
 			wantCommentCount: 1,
 			wantSeverity:     "medium",
 		},
 		{
 			name:             "malformed comments dropped",
-			opencodeOutput:   `{"summary":"test","comments":[{"path":"a.go","line":1,"severity":"low","body":"valid"},{"path":"","line":0,"body":"invalid"}]}`,
+			output:           `{"summary":"test","comments":[{"path":"a.go","line":1,"severity":"low","body":"valid"},{"path":"","line":0,"body":"invalid"}]}`,
 			wantCommentCount: 1,
 		},
 		{
 			name:             "prose around JSON extracted correctly",
-			opencodeOutput:   "Here is my review:\n\n" + `{"summary":"extracted","comments":[]}` + "\n\nDone.",
+			output:           "Here is my review:\n\n" + `{"summary":"extracted","comments":[]}` + "\n\nDone.",
 			wantSummary:      "extracted",
 			wantCommentCount: 0,
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ws := setupWorkspaceWithDiff(t, "some diff content")
-			credFile := writeFakeCredentials(t)
-			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
-			t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
-			setupFakeOpencode(t, `printf '%s' '`+tt.opencodeOutput+`'`)
+		for _, mode := range []string{"structured", "plain"} {
+			t.Run(tt.name+"/"+mode, func(t *testing.T) {
+				ws := setupWorkspaceWithDiff(t, "some diff content")
+				fc := &fakeClient{text: tt.output}
 
-			err := Run(context.Background(), Options{
-				Workspace: ws,
-				Runner:    &command.ExecRunner{},
+				err := Run(context.Background(), Options{
+					Workspace: ws, Resolve: fakeResolve(fc, "top-secret-value"),
+					NoStructuredOutput: mode == "plain",
+				})
+				assert.NilError(t, err)
+
+				if tt.wantSecurityBlock {
+					assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileSecurityBlock)))
+					return
+				}
+
+				if tt.wantFailed {
+					assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileFailed)))
+					return
+				}
+
+				assert.Assert(t, !fileExists(filepath.Join(ws, artifact.FileFailed)), "should not be marked failed")
+
+				review := readReview(t, ws)
+				if tt.wantSummary != "" {
+					assert.Equal(t, review.Summary, tt.wantSummary)
+				}
+				assert.Equal(t, len(review.Comments), tt.wantCommentCount)
+				if tt.wantRating > 0 {
+					assert.Equal(t, review.ReviewScore.Rating, tt.wantRating)
+				}
+				if tt.wantSeverity != "" && len(review.Comments) > 0 {
+					assert.Equal(t, review.Comments[0].Severity, tt.wantSeverity)
+				}
 			})
+		}
+	}
+}
+
+func TestRunModelFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantSummary string
+	}{
+		{
+			name:        "incomplete response",
+			err:         &model.IncompleteError{Reason: "output token limit reached"},
+			wantSummary: "Paco: incomplete model response: output token limit reached.",
+		},
+		{
+			name:        "timeout",
+			err:         context.DeadlineExceeded,
+			wantSummary: "Paco: the model review timed out after 900s.",
+		},
+		{
+			name:        "backend error does not leak details",
+			err:         errors.New("401 unauthorized for top-secret-value"),
+			wantSummary: "Paco: the model backend returned an error; check the PipelineRun logs.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := setupWorkspaceWithDiff(t, "some diff")
+			fc := &fakeClient{err: tt.err}
+			err := Run(context.Background(), Options{Workspace: ws, Resolve: fakeResolve(fc, "top-secret-value")})
 			assert.NilError(t, err)
-
-			if tt.wantSecurityBlock {
-				assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileSecurityBlock)))
-				return
-			}
-
-			if tt.wantFailed {
-				assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileFailed)))
-				return
-			}
-
-			assert.Assert(t, !fileExists(filepath.Join(ws, artifact.FileFailed)), "should not be marked failed")
-
-			data, readErr := os.ReadFile(filepath.Join(ws, artifact.FileReview))
-			assert.NilError(t, readErr)
-			var review Review
-			assert.NilError(t, json.Unmarshal(data, &review))
-
-			if tt.wantSummary != "" {
-				assert.Equal(t, review.Summary, tt.wantSummary)
-			}
-			assert.Equal(t, len(review.Comments), tt.wantCommentCount)
-			if tt.wantRating > 0 {
-				assert.Equal(t, review.ReviewScore.Rating, tt.wantRating)
-			}
-			if tt.wantSeverity != "" && len(review.Comments) > 0 {
-				assert.Equal(t, review.Comments[0].Severity, tt.wantSeverity)
-			}
+			assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileFailed)))
+			assert.Equal(t, readReview(t, ws).Summary, tt.wantSummary)
 		})
 	}
 }
 
-func TestRunOpenCodeFailure(t *testing.T) {
-	ws := setupWorkspaceWithDiff(t, "some diff")
-	credFile := writeFakeCredentials(t)
-	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
-	t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
-	setupFakeOpencode(t, `echo "error" >&2; exit 1`)
-
-	err := Run(context.Background(), Options{
-		Workspace: ws,
-		Runner:    &command.ExecRunner{},
-	})
-	assert.NilError(t, err)
-	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileFailed)))
+func TestScrubber(t *testing.T) {
+	scrub := scrubber([]string{"literal-secret", ""})
+	got := scrub("a literal-secret and ghp_ABCDEFghijklmnopqrstuvwx " + strings.Repeat("x", 5000))
+	assert.Assert(t, strings.HasPrefix(got, "a [REDACTED] and [REDACTED] "), "got %q", got[:60])
+	assert.Equal(t, len(got), maxLogBytes)
 }
 
 func TestNormalizeReasoningEffort(t *testing.T) {
@@ -314,13 +345,15 @@ func TestNormalizeReasoningEffort(t *testing.T) {
 		want  string
 		valid bool
 	}{
-		{"empty falls back to default", "", defaultVariant, true},
+		{"empty falls back to default", "", "low", true},
 		{"lowercase passes through", "high", "high", true},
 		{"trims and lowercases", " HIGH \n", "high", true},
-		{"none", "none", "none", true},
-		{"minimal", "minimal", "minimal", true},
+		{"medium", "medium", "medium", true},
 		{"xhigh", "xhigh", "xhigh", true},
 		{"max", "max", "max", true},
+		{"none omits effort", "none", "", true},
+		{"none trims and lowercases", " NONE \n", "", true},
+		{"minimal is no longer accepted", "minimal", "", false},
 		{"unknown word", "extreme", "", false},
 		{"numeric", "3", "", false},
 	}
@@ -337,128 +370,117 @@ func TestNormalizeReasoningEffort(t *testing.T) {
 	}
 }
 
-// captureOpencode installs a fake opencode that records its argv and the
-// config it was handed, so tests can assert what paco actually invokes.
-func captureOpencode(t *testing.T, ws string) (argvPath, configPath string) {
-	t.Helper()
-	argvPath = filepath.Join(ws, "captured-argv.txt")
-	configPath = filepath.Join(ws, "captured-config.json")
-	setupFakeOpencode(t, fmt.Sprintf(
-		`printf '%%s\n' "$@" > %s; printenv OPENCODE_CONFIG_CONTENT > %s; printf '{"summary":"ok","comments":[]}'`,
-		argvPath, configPath,
-	))
-	return argvPath, configPath
-}
-
-func TestRunOpencodeInvocation(t *testing.T) {
-	const model = "google-vertex-anthropic/claude-sonnet-5@default"
+func TestRunModelRequest(t *testing.T) {
 	tests := []struct {
-		name        string
-		effort      string
-		wantVariant string
+		name               string
+		model              string
+		effort             string
+		wantModel          string
+		wantEffort         string
+		noStructuredOutput bool
 	}{
-		{"defaults the variant when effort is unset", "", defaultVariant},
-		{"passes the requested effort as a variant", "high", "high"},
-		{"trims and lowercases the effort", " LOW \n", "low"},
+		{name: "backend defaults", wantModel: "default-model", wantEffort: "low"},
+		{name: "explicit model passed verbatim", model: "claude-opus-4-6@20260101", wantModel: "claude-opus-4-6@20260101", wantEffort: "low"},
+		{name: "effort trimmed and lowercased", effort: " MAX \n", wantModel: "default-model", wantEffort: "max"},
+		{name: "omit effort only", effort: "none", wantModel: "default-model"},
+		{name: "omit schema only", noStructuredOutput: true, wantModel: "default-model", wantEffort: "low"},
+		{name: "haiku overrides", model: "claude-haiku-4-5@20251001", effort: "none", noStructuredOutput: true, wantModel: "claude-haiku-4-5@20251001"},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := setupWorkspaceWithDiff(t, "some diff")
-			credFile := writeFakeCredentials(t)
-			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
-			t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
-			argvPath, configPath := captureOpencode(t, ws)
+			fc := &fakeClient{text: `{"summary":"ok","comments":[]}`}
 
 			err := Run(context.Background(), Options{
-				Workspace:       ws,
-				Model:           model,
-				ReasoningEffort: tt.effort,
-				Runner:          &command.ExecRunner{},
+				Workspace:          ws,
+				Model:              tt.model,
+				ReasoningEffort:    tt.effort,
+				Resolve:            fakeResolve(fc),
+				NoStructuredOutput: tt.noStructuredOutput,
 			})
 			assert.NilError(t, err)
-
-			argvData, err := os.ReadFile(argvPath)
-			assert.NilError(t, err)
-			argv := strings.Fields(string(argvData))
-
-			// --variant is not a real `opencode run` flag: 1.18.31 ignores it
-			// and 2.x rejects it outright.
-			for _, arg := range argv {
-				assert.Assert(t, arg != "--variant", "argv must not contain --variant: %v", argv)
+			assert.Equal(t, fc.calls, 1)
+			assert.Equal(t, fc.got.Model, tt.wantModel)
+			assert.Equal(t, fc.got.Effort, tt.wantEffort)
+			assert.Equal(t, fc.got.System, systemPrompt)
+			assert.Equal(t, fc.got.MaxTokens, int64(maxOutputTokens))
+			if tt.noStructuredOutput {
+				assert.Assert(t, fc.got.Schema == nil)
+			} else {
+				assert.DeepEqual(t, fc.got.Schema, reviewSchema)
 			}
-
-			// A "#variant" suffix breaks model resolution on opencode 1.18.31,
-			// so the model must be passed through untouched.
-			modelIdx := -1
-			for i, arg := range argv {
-				if arg == "--model" {
-					modelIdx = i
-					break
-				}
-			}
-			assert.Assert(t, modelIdx >= 0 && modelIdx+1 < len(argv), "argv missing --model: %v", argv)
-			assert.Equal(t, argv[modelIdx+1], model)
-
-			configData, err := os.ReadFile(configPath)
-			assert.NilError(t, err)
-			var config map[string]any
-			assert.NilError(t, json.Unmarshal(configData, &config))
-
-			agents := config["agent"].(map[string]any)
-			reviewer := agents["paco-reviewer"].(map[string]any)
-			assert.Equal(t, reviewer["variant"], tt.wantVariant)
-
-			// options is an unvalidated passthrough that Anthropic ignores;
-			// sending it would only look like the effort was applied.
-			_, hasOptions := reviewer["options"]
-			assert.Assert(t, !hasOptions, "agent config must not carry an options key")
+			assert.Assert(t, strings.Contains(fc.got.Prompt, "some diff"))
 		})
 	}
 }
 
+func TestRunBoundsCredentialResolution(t *testing.T) {
+	ws := setupWorkspaceWithDiff(t, "some diff")
+	fc := &fakeClient{text: `{"summary":"ok","comments":[]}`}
+	start := time.Now()
+	var lifetime context.Context
+	err := Run(context.Background(), Options{
+		Workspace: ws,
+		Resolve: func(ctx context.Context) (*model.Resolved, error) {
+			lifetime = ctx
+			deadline, ok := ctx.Deadline()
+			assert.Assert(t, ok, "credential resolution must have a deadline")
+			assert.Assert(t, !deadline.Before(start.Add(reviewTimeout)))
+			assert.Assert(t, !deadline.After(time.Now().Add(reviewTimeout)))
+			return fakeResolve(fc)(ctx)
+		},
+	})
+	assert.NilError(t, err)
+	assert.Equal(t, lifetime.Err(), context.Canceled)
+	assert.Equal(t, fc.calls, 1)
+}
+
+func TestReviewSchemaIsStrict(t *testing.T) {
+	var walk func(path string, node map[string]any)
+	walk = func(path string, node map[string]any) {
+		if node["type"] == "object" {
+			assert.Equal(t, node["additionalProperties"], false, path)
+			props := node["properties"].(map[string]any)
+			required := node["required"].([]any)
+			assert.Equal(t, len(required), len(props), path)
+			for name, child := range props {
+				walk(path+"."+name, child.(map[string]any))
+			}
+		}
+		if items, ok := node["items"].(map[string]any); ok {
+			walk(path+"[]", items)
+		}
+	}
+	walk("$", reviewSchema)
+}
+
 func TestRunReasoningEffortInvalid(t *testing.T) {
 	ws := setupWorkspaceWithDiff(t, "some diff")
-	credFile := writeFakeCredentials(t)
-	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
-	t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
-	argvPath, _ := captureOpencode(t, ws)
+	fc := &fakeClient{text: `{"summary":"ok","comments":[]}`}
 
 	err := Run(context.Background(), Options{
 		Workspace:       ws,
 		ReasoningEffort: "turbo",
-		Runner:          &command.ExecRunner{},
+		Resolve:         fakeResolve(fc),
 	})
 	assert.NilError(t, err)
 	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileFailed)))
-	assert.Assert(t, !fileExists(argvPath), "opencode must not run on invalid input")
-
-	reviewData, err := os.ReadFile(filepath.Join(ws, artifact.FileReview))
-	assert.NilError(t, err)
-	var review Review
-	assert.NilError(t, json.Unmarshal(reviewData, &review))
-	assert.Assert(t, strings.Contains(review.Summary, "invalid --reasoning-effort"), "got summary %q", review.Summary)
+	assert.Equal(t, fc.calls, 0, "the model must not be called on invalid input")
+	summary := readReview(t, ws).Summary
+	assert.Assert(t, strings.Contains(summary, "invalid --reasoning-effort"), "got summary %q", summary)
 }
 
 func TestRunErrorFileWinsOverInvalidReasoningEffort(t *testing.T) {
 	ws := setupWorkspaceWithDiff(t, "some diff")
 	assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileError), []byte("skip reason"), 0o600))
-	credFile := writeFakeCredentials(t)
-	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
-	t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
 
 	err := Run(context.Background(), Options{
 		Workspace:       ws,
 		ReasoningEffort: "turbo",
-		Runner:          &command.ExecRunner{},
+		Resolve:         fakeResolve(&fakeClient{}),
 	})
 	assert.NilError(t, err)
-
-	reviewData, err := os.ReadFile(filepath.Join(ws, artifact.FileReview))
-	assert.NilError(t, err)
-	var review Review
-	assert.NilError(t, json.Unmarshal(reviewData, &review))
-	assert.Equal(t, review.Summary, "skip reason")
+	assert.Equal(t, readReview(t, ws).Summary, "skip reason")
 }
 
 func TestRunPromptToolchains(t *testing.T) {
@@ -489,25 +511,17 @@ func TestRunPromptToolchains(t *testing.T) {
 			if tt.artifact != "" {
 				assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileToolchains), []byte(tt.artifact), 0o600))
 			}
-			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", writeFakeCredentials(t))
-			t.Setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
-			promptPath := filepath.Join(ws, "captured-prompt.txt")
-			setupFakeOpencode(t, fmt.Sprintf(`cat > %s; printf '{"summary":"ok","comments":[]}'`, promptPath))
+			fc := &fakeClient{text: `{"summary":"ok","comments":[]}`}
 
-			err := Run(context.Background(), Options{
-				Workspace: ws,
-				Model:     "test-model",
-				Runner:    &command.ExecRunner{},
-			})
+			err := Run(context.Background(), Options{Workspace: ws, Resolve: fakeResolve(fc)})
 			assert.NilError(t, err)
 
-			prompt, err := os.ReadFile(promptPath)
-			assert.NilError(t, err)
+			prompt := fc.got.Prompt
 			if tt.want != "" {
-				assert.Assert(t, strings.Contains(string(prompt), tt.want), "prompt missing %q", tt.want)
+				assert.Assert(t, strings.Contains(prompt, tt.want), "prompt missing %q", tt.want)
 			}
 			if tt.wantNot != "" {
-				assert.Assert(t, !strings.Contains(string(prompt), tt.wantNot), "prompt unexpectedly contains %q", tt.wantNot)
+				assert.Assert(t, !strings.Contains(prompt, tt.wantNot), "prompt unexpectedly contains %q", tt.wantNot)
 			}
 		})
 	}

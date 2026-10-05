@@ -15,7 +15,18 @@ Fetches the PR diff and existing feedback, writes artifacts for downstream steps
 
 ### Environment
 
-- `GH_TOKEN` or `gh` CLI auth — GitHub access
+- `GH_TOKEN`, else `GITHUB_TOKEN` — GitHub token
+- `GITHUB_API_URL` — REST API base URL for GitHub Enterprise; the
+  GraphQL endpoint is derived from it (`/api/graphql` on the same host)
+  unless `GITHUB_GRAPHQL_URL` is set
+- `GH_HOST` — GitHub Enterprise hostname, used when `GITHUB_API_URL`
+  is unset (REST at `https://<host>/api/v3/`, GraphQL at
+  `https://<host>/api/graphql`; for GHE.com `<tenant>.ghe.com` hosts,
+  REST at `https://api.<host>/` and GraphQL at `https://api.<host>/graphql`)
+
+All GitHub URLs must use `https`.
+
+A missing token or invalid URL is reported as a skip (`.paco-error`).
 
 ### Artifacts Written
 
@@ -68,23 +79,52 @@ Runs the LLM review and produces normalized findings.
 | Flag | Required | Description |
 |---|---|---|
 | `--workspace` | no | Workspace directory (default `.`) |
-| `--model` | no | Model identifier (default `google-vertex-anthropic/claude-sonnet-5@default`) |
-| `--reasoning-effort` | no | Reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Empty means `minimal`. Values are trimmed and lowercased |
+| `--model` | no | Claude model id, sent as is. Empty means `claude-opus-4-6@default` on Vertex AI and `claude-opus-4-6` on the Anthropic API |
+| `--reasoning-effort` | no | `low`, `medium`, `high`, `xhigh`, or `max`. Empty means `low`; `none` omits the API effort parameter. Values are trimmed and lowercased |
+| `--no-structured-output` | no | Omit the response schema (default `false`); still request JSON and apply parsing, normalization, and secret scanning |
 
-Passed to opencode as the `paco-reviewer` agent's `variant`. Which values a
-given model actually supports is model-specific; an unsupported one surfaces as
-a normal backend failure.
+The effort is sent as the Messages API `output_config.effort`. Which
+values a model supports is model-specific (for example, Opus 4.6
+accepts `max` but not `xhigh`); an unsupported value surfaces as a
+normal backend failure.
 
-Verified against opencode `1.18.31`, the version shipped in
-`ghcr.io/chmouel/agents-image`. Note that `--variant` is not a valid
-`opencode run` flag, and a `#variant` suffix on `--model` breaks model
-resolution on that version.
+By default, the review is requested with structured outputs: the request carries
+a JSON schema for `.paco-review.json`. Extended thinking and tool use
+are never enabled. The response is streamed and only accepted when it
+completes normally; a token-limit stop, a refusal, a truncated stream,
+or the 900 second timeout produce a failure summary. The deadline includes
+Vertex token acquisition; each OAuth request also has a 30-second timeout.
+
+For models without effort support, such as Haiku 4.5, use
+`--reasoning-effort none`. To make a plain-text model request instead of
+using the structured-output feature, add `--no-structured-output`:
+
+```shell
+paco review --workspace /workspace/source \
+  --model claude-haiku-4-5@20251001 \
+  --reasoning-effort none --no-structured-output
+```
+
+The prompt still asks for the same JSON object, but the API no longer
+guarantees its shape. Unparseable responses produce failure artifacts.
+Paco never retries a rejected schema request without the schema automatically.
 
 ### Environment
 
-- `GOOGLE_APPLICATION_CREDENTIALS` — path to Vertex AI service account JSON
-- `GOOGLE_CLOUD_PROJECT` — Vertex AI project ID (falls back to credentials file)
-- `VERTEX_LOCATION` — Vertex AI location (default `global`)
+The backend is picked from the environment:
+
+1. `ANTHROPIC_API_KEY` set — the Anthropic API at
+   `https://api.anthropic.com`. Other `ANTHROPIC_*` variables, such as
+   `ANTHROPIC_BASE_URL`, are ignored.
+2. Otherwise `GOOGLE_APPLICATION_CREDENTIALS` — Vertex AI with the
+   service account JSON at that path.
+   - `GOOGLE_CLOUD_PROJECT` — Vertex AI project ID (falls back to
+     `project_id` in the credentials file)
+   - `VERTEX_LOCATION` — Vertex AI location (default `global`)
+3. Neither set — the run fails with a failure summary.
+
+Other variables:
+
 - `TRIGGER_COMMENT` — trigger comment text (determines review/summary mode)
 
 ### Artifacts Read
@@ -123,7 +163,19 @@ Posts the review results to GitHub.
 
 ### Environment
 
-- `GH_TOKEN` or `gh` CLI auth — GitHub access (rescanned for belt-and-braces secret check)
+- `GH_TOKEN`, else `GITHUB_TOKEN` — GitHub token
+- `GITHUB_API_URL` — REST API base URL for GitHub Enterprise; the
+  GraphQL endpoint is derived from it (`/api/graphql` on the same host)
+  unless `GITHUB_GRAPHQL_URL` is set
+- `GH_HOST` — GitHub Enterprise hostname, used when `GITHUB_API_URL`
+  is unset (REST at `https://<host>/api/v3/`, GraphQL at
+  `https://<host>/api/graphql`; for GHE.com `<tenant>.ghe.com` hosts,
+  REST at `https://api.<host>/` and GraphQL at `https://api.<host>/graphql`)
+
+All GitHub URLs must use `https`.
+
+The resolved token is also used as a literal in the belt-and-braces
+secret rescan. A missing token or invalid URL is a fatal error.
 
 ### Artifacts Read
 

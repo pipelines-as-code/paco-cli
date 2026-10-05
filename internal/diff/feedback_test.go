@@ -1,9 +1,11 @@
 package diff
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
 	"gotest.tools/v3/assert"
 )
 
@@ -79,22 +81,47 @@ func TestCollectLogins(t *testing.T) {
 		{Login: "alice"},
 	}
 
-	reviews := []map[string]interface{}{
-		{"user": map[string]interface{}{"login": "charlie"}},
+	reviews := []ghclient.Review{{Login: "charlie"}, {Login: ""}}
+	issueComments := []ghclient.IssueComment{{Login: "bob"}}
+
+	assert.DeepEqual(t, collectLogins(comments, reviews, issueComments), []string{"alice", "bob", "charlie"})
+}
+
+func TestBuildFeedbackDigestGolden(t *testing.T) {
+	permMap := map[string]string{"alice": "write", "bob": "admin", "eve": "read"}
+	long := strings.Repeat("x", 450)
+	comments := []inlineComment{
+		{Login: "alice", Path: "a.go", Line: 3, Body: "line one\r\nline two", ReviewState: "COMMENTED"},
+		{Login: "alice", Path: "b.go", Line: 4, Body: "resolved", Resolved: true, ReviewState: "COMMENTED"},
+		{Login: "alice", Path: "c.go", Line: 5, Body: "dismissed", ReviewState: "DISMISSED"},
+		{Login: "eve", Path: "d.go", Line: 6, Body: "untrusted", ReviewState: "COMMENTED"},
+		{Login: "bob", Path: "e.go", Line: 7, Body: long, ReviewState: "APPROVED"},
+		{Login: "bob", Path: "", Line: 8, Body: "no path", ReviewState: "COMMENTED"},
+	}
+	reviews := []ghclient.Review{
+		{Login: "bob", Body: "LGTM\nship it", State: "APPROVED"},
+		{Login: "bob", Body: "## Paco Review\nold", State: "COMMENTED"},
+		{Login: "bob", Body: "Paco inline comments for x", State: "COMMENTED"},
+		{Login: "bob", Body: "<!-- paco-review --> marker", State: "COMMENTED"},
+		{Login: "alice", Body: "dismissed review", State: "DISMISSED"},
+		{Login: "", Body: "ghost review", State: "COMMENTED"},
+		{Login: "alice", Body: "", State: "APPROVED"},
+	}
+	issueComments := []ghclient.IssueComment{
+		{ID: 1, Login: "alice", Body: "please add tests"},
+		{ID: 2, Login: "eve", Body: "drive-by"},
+		{ID: 3, Login: "bob", Body: "<!-- paco-review -->\nsticky"},
 	}
 
-	issueComments := []map[string]interface{}{
-		{"user": map[string]interface{}{"login": "bob"}},
-	}
+	want := strings.Join([]string{
+		"- alice on a.go:3: line one  line two",
+		"- bob on e.go:7: " + strings.Repeat("x", 400),
+		"- review by bob: LGTM ship it",
+		"- comment by alice: please add tests",
+	}, "\n")
+	assert.Equal(t, buildFeedbackDigest(comments, reviews, issueComments, permMap), want)
 
-	logins := collectLogins(comments, reviews, issueComments)
-	loginMap := map[string]bool{}
-	for _, l := range logins {
-		loginMap[l] = true
-	}
-
-	assert.Assert(t, loginMap["alice"])
-	assert.Assert(t, loginMap["bob"])
-	assert.Assert(t, loginMap["charlie"])
-	assert.Equal(t, len(logins), 3)
+	inline, err := json.Marshal(buildExistingInlineMap(comments, permMap))
+	assert.NilError(t, err)
+	assert.Equal(t, string(inline), `{"a.go":{"3":true},"e.go":{"7":true}}`)
 }

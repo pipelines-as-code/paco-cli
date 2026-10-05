@@ -113,6 +113,9 @@ func (t *Toolset) readDiff(input json.RawMessage) (string, error) {
 			continue
 		}
 		header := fmt.Sprintf("File: old=%q new=%q; status: %s; binary: %t\n", file.OldPath, file.NewPath, file.Status, file.Binary)
+		if file.OldMode != "" || file.NewMode != "" {
+			header += fmt.Sprintf("File modes: old=%q new=%q\n", file.OldMode, file.NewMode)
+		}
 		if len(header) > maxResultBytes {
 			return "", errors.New("diff file metadata exceeds the tool result limit")
 		}

@@ -80,6 +80,7 @@ func TestCollectPinnedComparison(t *testing.T) {
 	assert.Equal(t, manifest.Repo, "owner/repo")
 	assert.Equal(t, manifest.PRNumber, 1)
 	assert.Equal(t, manifest.HeadSHA, "abc123")
+	assert.Equal(t, manifest.BaseRef, "main")
 	assert.Equal(t, manifest.TargetBaseSHA, "def456")
 	assert.Equal(t, manifest.MergeBaseSHA, "aaa111")
 	assert.Equal(t, manifest.DiffDigest, fmt.Sprintf("%x", sha256.Sum256([]byte(simpleDiff))))

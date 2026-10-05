@@ -31,6 +31,7 @@ func verifiedArtifacts(t *testing.T) map[string]string {
 	status := review.VerificationStatus{
 		Version: 1, State: "complete", Repo: "owner/repo",
 		PRNumber: 1, HeadSHA: "abc123", ReviewDigest: review.Digest(data), Accepted: 3, Unanchored: 1,
+		BaseRef: "main", TargetBaseSHA: "def456",
 	}
 	statusData, err := json.Marshal(status)
 	assert.NilError(t, err)
@@ -45,7 +46,7 @@ func verifiedArtifacts(t *testing.T) map[string]string {
 func TestPostVerified(t *testing.T) {
 	f, gh := ghtest.New(t)
 	happy(f)
-	f.JSON("GET /repos/owner/repo/pulls/1", `{"head":{"sha":"abc123"},"base":{"ref":"main"}}`)
+	f.JSON("GET /repos/owner/repo/pulls/1", `{"head":{"sha":"abc123"},"base":{"ref":"main","sha":"def456"}}`)
 	ws := workspace(t, verifiedArtifacts(t))
 	opts := Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: gh}
 	assert.NilError(t, Run(context.Background(), opts))
@@ -67,11 +68,18 @@ func TestPostVerified(t *testing.T) {
 
 func TestVerifiedPublicationRejectsInvalidState(t *testing.T) {
 	tests := []struct {
-		name   string
-		change func(map[string]string)
-		head   string
+		name    string
+		change  func(map[string]string)
+		head    string
+		baseRef string
+		baseSHA string
 	}{
 		{name: "head changed", head: "different"},
+		{name: "base commit changed", baseSHA: "different"},
+		{name: "retargeted to branch at same commit", baseRef: "release"},
+		{name: "missing base provenance", change: func(files map[string]string) {
+			files[review.FileStatus] = strings.Replace(files[review.FileStatus], `"base_ref":"main"`, `"base_ref":""`, 1)
+		}},
 		{name: "missing provenance", change: func(files map[string]string) { delete(files, review.FileStatus) }},
 		{name: "changed output", change: func(files map[string]string) { files[artifact.FileReview] += " " }},
 		{name: "removed verified flag", change: func(files map[string]string) {
@@ -90,7 +98,14 @@ func TestVerifiedPublicationRejectsInvalidState(t *testing.T) {
 			if head == "" {
 				head = "abc123"
 			}
-			f.JSON("GET /repos/owner/repo/pulls/1", `{"head":{"sha":"`+head+`"},"base":{"ref":"main"}}`)
+			baseRef, baseSHA := tt.baseRef, tt.baseSHA
+			if baseRef == "" {
+				baseRef = "main"
+			}
+			if baseSHA == "" {
+				baseSHA = "def456"
+			}
+			f.JSON("GET /repos/owner/repo/pulls/1", `{"head":{"sha":"`+head+`"},"base":{"ref":"`+baseRef+`","sha":"`+baseSHA+`"}}`)
 			files := verifiedArtifacts(t)
 			if tt.change != nil {
 				tt.change(files)
@@ -100,6 +115,7 @@ func TestVerifiedPublicationRejectsInvalidState(t *testing.T) {
 			assert.Assert(t, err != nil)
 			assert.Assert(t, !f.Called("POST "+commentsPath))
 			assert.Assert(t, !f.Called("POST "+reviewsPath))
+			assert.Assert(t, !f.Called("POST "+labelsPath))
 		})
 	}
 }
@@ -107,7 +123,7 @@ func TestVerifiedPublicationRejectsInvalidState(t *testing.T) {
 func TestVerifiedInlineFailureIsExplicit(t *testing.T) {
 	f, gh := ghtest.New(t)
 	happy(f)
-	f.JSON("GET /repos/owner/repo/pulls/1", `{"head":{"sha":"abc123"},"base":{"ref":"main"}}`)
+	f.JSON("GET /repos/owner/repo/pulls/1", `{"head":{"sha":"abc123"},"base":{"ref":"main","sha":"def456"}}`)
 	f.Status("POST "+reviewsPath, http.StatusUnprocessableEntity, `{}`)
 	ws := workspace(t, verifiedArtifacts(t))
 	err := Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: gh})

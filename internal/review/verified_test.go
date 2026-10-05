@@ -87,7 +87,7 @@ func verifiedWorkspace(t *testing.T) string {
 	files := map[string]string{
 		artifact.FileInputManifest: jsonText(t, artifact.InputManifest{
 			Version: 1, Repo: "owner/repo", PRNumber: 1, HeadSHA: "head-sha",
-			TargetBaseSHA: "base-sha", MergeBaseSHA: "before-sha", DiffDigest: Digest([]byte(verifiedDiff)),
+			BaseRef: "main", TargetBaseSHA: "base-sha", MergeBaseSHA: "before-sha", DiffDigest: Digest([]byte(verifiedDiff)),
 			ContextStatus: "complete", Head: artifact.ContextState{Status: "available"},
 			Before: artifact.ContextState{Status: "available"},
 		}),
@@ -163,6 +163,8 @@ func TestVerifiedReviewHTTP(t *testing.T) {
 			assert.NilError(t, err)
 			status, err := ReadStatus(&artifact.Workspace{Dir: ws}, data)
 			assert.NilError(t, err)
+			assert.Equal(t, status.BaseRef, "main")
+			assert.Equal(t, status.TargetBaseSHA, "base-sha")
 			assert.Equal(t, status.Accepted, tt.accepted)
 			assert.Equal(t, status.Usage.ModelRequests, int64(2))
 			assert.Equal(t, status.Usage.OutputTokens, int64(20))
@@ -181,6 +183,13 @@ func TestVerifiedInputAndReuse(t *testing.T) {
 		{name: "valid empty review", wantCalls: 1},
 		{name: "missing manifest", failed: true, edit: func(ws string) {
 			assert.NilError(t, os.Remove(filepath.Join(ws, artifact.FileInputManifest)))
+		}},
+		{name: "missing base identity", failed: true, edit: func(ws string) {
+			path := filepath.Join(ws, artifact.FileInputManifest)
+			data, err := os.ReadFile(path)
+			assert.NilError(t, err)
+			data = []byte(strings.Replace(string(data), `"base_ref":"main"`, `"base_ref":""`, 1))
+			assert.NilError(t, os.WriteFile(path, data, 0o600))
 		}},
 		{name: "changed diff", failed: true, edit: func(ws string) {
 			assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileDiff), []byte(verifiedDiff+"\n"), 0o600))
@@ -245,6 +254,61 @@ func TestVerifiedNoExploration(t *testing.T) {
 	status, err := ReadStatus(&artifact.Workspace{Dir: ws}, data)
 	assert.NilError(t, err)
 	assert.Equal(t, status.State, "partial")
+}
+
+func TestVerifiedFileModeCoverage(t *testing.T) {
+	const modeDiff = "diff --git a/script.sh b/script.sh\nold mode 100755\nnew mode 100644\n"
+	tests := []struct {
+		name        string
+		withFinding bool
+	}{
+		{name: "mode only"},
+		{name: "mode and source change", withFinding: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := verifiedWorkspace(t)
+			patch := modeDiff
+			candidates := []Candidate{}
+			if tt.withFinding {
+				patch = verifiedDiff + modeDiff
+				candidates = append(candidates, deletedCandidate())
+			}
+			manifestPath := filepath.Join(ws, artifact.FileInputManifest)
+			data, err := os.ReadFile(manifestPath)
+			assert.NilError(t, err)
+			var manifest artifact.InputManifest
+			assert.NilError(t, json.Unmarshal(data, &manifest))
+			manifest.DiffDigest = Digest([]byte(patch))
+			assert.NilError(t, os.WriteFile(manifestPath, []byte(jsonText(t, manifest)), 0o600))
+			assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileDiff), []byte(patch), 0o600))
+			responses := []string{jsonText(t, discovery{
+				Summary: "Removes executable permission.", ReviewScore: ReviewScore{2, "Small."}, Candidates: candidates,
+			})}
+			if tt.withFinding {
+				c := candidates[0]
+				responses = append(responses, jsonText(t, verdict{
+					Summary:   "Removes executable permission and a guard.",
+					Decisions: []decision{{ID: c.ID, Outcome: "accept", Reason: "Guard is removed.", Evidence: c.Evidence}},
+				}))
+			}
+			resolve, requests := reviewServer(t, responses)
+			assert.NilError(t, Run(context.Background(), Options{Workspace: ws, VerifyFindings: true, Resolve: resolve}))
+			assert.Equal(t, len(*requests), len(responses))
+			for _, request := range *requests {
+				assert.Assert(t, strings.Contains(jsonText(t, request["messages"]), "File modes before=\\\"100755\\\" head=\\\"100644\\\""))
+			}
+			data, err = os.ReadFile(filepath.Join(ws, artifact.FileReview))
+			assert.NilError(t, err)
+			status, err := ReadStatus(&artifact.Workspace{Dir: ws}, data)
+			assert.NilError(t, err)
+			assert.Equal(t, status.State, "partial")
+			assert.Equal(t, status.Accepted, len(candidates))
+			assert.Equal(t, len(status.Limitations), 1)
+			assert.Assert(t, strings.Contains(status.Limitations[0], "File-mode change"))
+			assert.Assert(t, strings.Contains(status.Limitations[0], "outside verified coverage"))
+		})
+	}
 }
 
 func TestFindingBodyOmitsUnsafePatches(t *testing.T) {

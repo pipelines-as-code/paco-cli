@@ -33,6 +33,11 @@ func TestRedact(t *testing.T) {
 			want:  "[REDACTED] is the key",
 		},
 		{
+			name:  "Anthropic API key",
+			input: "key sk-ant-api03-ABCDEFGHIJ_klmnopqrst-uvw end",
+			want:  "key [REDACTED] end",
+		},
+		{
 			name:  "PEM header",
 			input: "-----BEGIN RSA PRIVATE KEY-----",
 			want:  "[REDACTED]",

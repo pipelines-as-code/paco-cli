@@ -16,7 +16,8 @@
 - Use `gotest.tools/v3/assert` (never testify)
 - Table-driven tests with `tests := []struct{...}{...}`
 - PascalCase test function names, no underscores
-- Test external commands via fake scripts in PATH, not mocks
+- Test GitHub and model calls against `httptest` servers
+  (`internal/ghclient/ghtest` for GitHub), not mocks
 
 ## Dependencies
 
@@ -27,6 +28,7 @@
 ## Code Review
 
 - Security-sensitive code (redaction, scanning, trust filtering,
-  prompt construction, subprocess execution) requires owner review
-- All `gh` and `opencode` calls go through `command.Runner`
-- Never use `sh -c` or shell interpolation for subprocess execution
+  prompt construction, external API clients) requires owner review
+- All GitHub calls go through `internal/ghclient`
+- All model calls go through `internal/model`
+- No subprocesses: do not use `os/exec`

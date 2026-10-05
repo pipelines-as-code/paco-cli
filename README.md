@@ -40,16 +40,22 @@ paco post --repo owner/repo --pr 42 --workspace /workspace/source
 | `--pr` | `diff`, `post` | yes | Pull request number |
 | `--comment-id` | `diff` | no | Trigger comment ID (for eyes reaction) |
 | `--workspace` | all | no | Workspace directory (default `.`) |
-| `--model` | `review` | no | Model identifier (default `google-vertex-anthropic/claude-sonnet-5@default`) |
-| `--reasoning-effort` | `review` | no | Reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` (default `minimal`) |
+| `--model` | `review` | no | Claude model id (default `claude-opus-4-6@default` on Vertex AI, `claude-opus-4-6` on the Anthropic API) |
+| `--reasoning-effort` | `review` | no | `low`, `medium`, `high`, `xhigh`, or `max` (default `low`); `none` omits the API effort parameter |
+| `--no-structured-output` | `review` | no | Omit the API response schema; JSON parsing and secret checks remain enabled (default `false`) |
 
 ### Environment Variables
 
 | Variable | Subcommand | Description |
 |---|---|---|
-| `GH_TOKEN` | `diff`, `post` | GitHub token (or use `gh` CLI auth) |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `review` | Path to Vertex AI service account JSON |
-| `GOOGLE_CLOUD_PROJECT` | `review` | Vertex AI project ID |
+| `GH_TOKEN` | `diff`, `post` | GitHub token |
+| `GITHUB_TOKEN` | `diff`, `post` | GitHub token, used when `GH_TOKEN` is unset |
+| `GITHUB_API_URL` | `diff`, `post` | GitHub REST API base URL for GitHub Enterprise (for example `https://ghe.example.com/api/v3`) |
+| `GH_HOST` | `diff`, `post` | GitHub Enterprise Server or GHE.com hostname, used when `GITHUB_API_URL` is unset |
+| `GITHUB_GRAPHQL_URL` | `diff` | GraphQL endpoint, when it cannot be derived from `GITHUB_API_URL` |
+| `ANTHROPIC_API_KEY` | `review` | Anthropic API key; when set, Paco calls the Anthropic API instead of Vertex AI |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `review` | Path to the Vertex AI service account JSON |
+| `GOOGLE_CLOUD_PROJECT` | `review` | Vertex AI project ID (default: `project_id` from the service account JSON) |
 | `VERTEX_LOCATION` | `review` | Vertex AI location (default `global`) |
 | `TRIGGER_COMMENT` | `review` | Trigger comment text (determines review vs summary mode) |
 
@@ -64,20 +70,33 @@ in [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml).
 1. **GitHub token** — Pipelines-as-Code provides this automatically
    via `{{git_auth_secret}}`.
 
-2. **Vertex AI credentials** — create a Kubernetes secret with your
-   Google Cloud service account key:
+2. **Model credentials**, one of:
 
-   ```shell
-   kubectl create secret generic paco-vertex-credentials \
-     --from-file=service-account.json=/path/to/service-account.json
-   ```
+   - Vertex AI: a Kubernetes secret with your Google Cloud service
+     account key, used by
+     [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml):
+
+     ```shell
+     kubectl create secret generic paco-vertex-credentials \
+       --from-file=service-account.json=/path/to/service-account.json
+     ```
+
+   - Anthropic API: a Kubernetes secret with your API key, used by
+     [`examples/pipelinerun-anthropic.yaml`](examples/pipelinerun-anthropic.yaml):
+
+     ```shell
+     kubectl create secret generic paco-anthropic-api-key \
+       --from-literal=api-key=sk-ant-...
+     ```
 
 ### Setup
 
-1. Copy [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml) to
-   `.tekton/paco.yaml` in your repository.
+1. Copy [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml)
+   (Vertex AI) or
+   [`examples/pipelinerun-anthropic.yaml`](examples/pipelinerun-anthropic.yaml)
+   (Anthropic API) to `.tekton/paco.yaml` in your repository.
 
-2. Update the `CHANGEME` values (GCP project, secret names).
+2. Update the `CHANGEME` values (image, GCP project, secret names).
 
 3. Optionally add review rules at `.tekton/ai/REVIEW.md` — see
    [`examples/review-rules.md`](examples/review-rules.md) for the
@@ -100,8 +119,10 @@ in [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml).
 
 ## Requirements
 
-- `gh` (GitHub CLI) — authenticated and on PATH
-- `opencode` — for the model call (review step only)
+Paco is a single static binary. It talks to the GitHub API and to
+Claude (on Vertex AI or the Anthropic API) over HTTPS, so the container
+image only needs `paco` and CA certificates. No shell, `gh`, or other
+CLI is required.
 
 ## Installation
 

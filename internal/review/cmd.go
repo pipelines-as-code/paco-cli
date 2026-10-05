@@ -3,47 +3,51 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
-	"github.com/pipelines-as-code/paco-cli/internal/command"
+	"github.com/pipelines-as-code/paco-cli/internal/model"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
 	"github.com/pipelines-as-code/paco-cli/internal/toolchain"
 	"github.com/spf13/cobra"
 )
 
-const openCodeTimeout = 900 * time.Second
+const (
+	reviewTimeout   = 900 * time.Second
+	maxOutputTokens = 16384
+	defaultEffort   = "low"
+	maxLogBytes     = 4000
+	systemPrompt    = "You are a non-agentic pull request reviewer. Tools are unavailable and must not be mentioned, requested, or used. Analyze only the supplied prompt and return its requested JSON object with no prose or markdown."
+)
 
 type Options struct {
-	Workspace       string
-	Model           string
-	ReasoningEffort string
-	TriggerComment  string
-	Runner          command.Runner
+	Workspace          string
+	Model              string
+	ReasoningEffort    string
+	TriggerComment     string
+	NoStructuredOutput bool
+	// Resolve builds the model client; nil resolves it from the environment.
+	Resolve func(ctx context.Context) (*model.Resolved, error)
 }
-
-// defaultVariant is applied when --reasoning-effort is not supplied.
-const defaultVariant = "minimal"
 
 var validReasoningEfforts = map[string]bool{
-	"none": true, "minimal": true, "low": true, "medium": true,
-	"high": true, "xhigh": true, "max": true,
+	"low": true, "medium": true, "high": true, "xhigh": true, "max": true,
 }
 
-// normalizeReasoningEffort resolves the effort into the agent variant opencode
-// should use, falling back to defaultVariant when unset.
 func normalizeReasoningEffort(value string) (string, error) {
 	v := strings.ToLower(strings.TrimSpace(value))
 	if v == "" {
-		return defaultVariant, nil
+		return defaultEffort, nil
+	}
+	if v == "none" {
+		return "", nil
 	}
 	if !validReasoningEfforts[v] {
-		return "", fmt.Errorf(
-			"invalid --reasoning-effort %q: must be one of none, minimal, low, medium, high, xhigh, max", v,
-		)
+		return "", fmt.Errorf("invalid --reasoning-effort %q: must be one of none, low, medium, high, xhigh, max", v)
 	}
 	return v, nil
 }
@@ -55,18 +59,36 @@ func Command() *cobra.Command {
 		Use:   "review",
 		Short: "Run AI review on a PR diff",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts.Runner = &command.ExecRunner{}
 			opts.TriggerComment = os.Getenv("TRIGGER_COMMENT")
 			return Run(cmd.Context(), opts)
 		},
 	}
 
 	cmd.Flags().StringVar(&opts.Workspace, "workspace", ".", "Workspace directory for artifacts")
-	cmd.Flags().StringVar(&opts.Model, "model", "google-vertex-anthropic/claude-sonnet-5@default", "Model to use")
+	cmd.Flags().StringVar(&opts.Model, "model", "",
+		"Claude model id (default \""+model.DefaultVertexModel+"\" on Vertex AI, \""+model.DefaultAnthropicModel+"\" on the Anthropic API)")
 	cmd.Flags().StringVar(&opts.ReasoningEffort, "reasoning-effort", "",
-		"Reasoning effort: none, minimal, low, medium, high, xhigh, or max (default \""+defaultVariant+"\")")
+		"Reasoning effort: none (omit), low, medium, high, xhigh, or max (default \""+defaultEffort+"\")")
+	cmd.Flags().BoolVar(&opts.NoStructuredOutput, "no-structured-output", false,
+		"Omit the response JSON schema; still request JSON and validate the model output")
 
 	return cmd
+}
+
+// scrubber removes credential patterns and known credential literals.
+func scrubber(secrets []string) func(string) string {
+	return func(s string) string {
+		for _, lit := range secrets {
+			if lit != "" {
+				s = strings.ReplaceAll(s, lit, "[REDACTED]")
+			}
+		}
+		s = security.Redact(s)
+		if len(s) > maxLogBytes {
+			s = s[:maxLogBytes]
+		}
+		return s
+	}
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -88,7 +110,7 @@ func Run(ctx context.Context, opts Options) error {
 		return writeFail(strings.TrimSpace(string(errMsg)))
 	}
 
-	reasoningVariant, err := normalizeReasoningEffort(opts.ReasoningEffort)
+	effort, err := normalizeReasoningEffort(opts.ReasoningEffort)
 	if err != nil {
 		return writeFail("Paco: " + err.Error())
 	}
@@ -99,30 +121,16 @@ func Run(ctx context.Context, opts Options) error {
 		return writeFail("No reviewable changes found in this diff.")
 	}
 
-	// Validate credentials
-	credFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-	if credFile == "" {
-		return writeFail("Paco: GOOGLE_APPLICATION_CREDENTIALS not set.")
-	}
-	credData, err := os.ReadFile(credFile)
-	if err != nil {
-		return writeFail(fmt.Sprintf("Paco: could not read the Vertex AI credentials file: %s (%v)", credFile, err))
-	}
-	var creds struct {
-		ClientEmail string `json:"client_email"`
-		PrivateKey  string `json:"private_key"`
-		ProjectID   string `json:"project_id"`
-	}
-	if err := json.Unmarshal(credData, &creds); err != nil || creds.ClientEmail == "" || creds.PrivateKey == "" {
-		return writeFail("Paco: the Vertex AI credentials file is missing required fields (client_email or private_key)")
-	}
+	runCtx, cancel := context.WithTimeout(ctx, reviewTimeout)
+	defer cancel()
 
-	vertexProject := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	if vertexProject == "" {
-		vertexProject = creds.ProjectID
+	resolve := opts.Resolve
+	if resolve == nil {
+		resolve = func(ctx context.Context) (*model.Resolved, error) { return model.Resolve(ctx, model.Config{}) }
 	}
-	if vertexProject == "" {
-		return writeFail("Paco: no Vertex AI project was configured or found in the service-account credentials.")
+	backend, err := resolve(runCtx)
+	if err != nil {
+		return writeFail("Paco: " + security.Redact(err.Error()) + ".")
 	}
 
 	// Determine mode
@@ -143,51 +151,22 @@ func Run(ctx context.Context, opts Options) error {
 	toolchainData, _ := ws.Read(artifact.FileToolchains)
 	prompt := BuildPrompt(mode, string(diffData), string(feedback), string(reviewRules), toolchain.Parse(toolchainData))
 
-	// OpenCode config
-	openCodeConfigMap := map[string]any{
-		"permission": "deny",
-		"share":      "disabled",
-		"autoupdate": false,
-		"agent": map[string]any{
-			"paco-reviewer": map[string]any{
-				"description": "Returns a JSON-only pull request review.",
-				"mode":        "primary",
-				"prompt":      "You are a non-agentic pull request reviewer. Tools are unavailable and must not be mentioned, requested, or used. Analyze only the supplied prompt and return its requested JSON object with no prose or markdown.",
-				"permission":  "deny",
-				"variant":     reasoningVariant,
-			},
-		},
-	}
-	openCodeConfigBytes, err := json.Marshal(openCodeConfigMap)
-	if err != nil {
-		return fmt.Errorf("marshaling opencode config: %w", err)
-	}
-	openCodeConfig := string(openCodeConfigBytes)
-
-	// Run opencode with sanitized environment
-	vertexLocation := os.Getenv("VERTEX_LOCATION")
-	if vertexLocation == "" {
-		vertexLocation = "global"
+	scrub := scrubber(backend.Secrets)
+	modelID := opts.Model
+	if modelID == "" {
+		modelID = backend.DefaultModel
 	}
 
-	home := os.Getenv("HOME")
-	if home == "" {
-		home = "/tmp/opencode-home"
+	schema := reviewSchema
+	if opts.NoStructuredOutput {
+		schema = nil
 	}
-	path := os.Getenv("PATH")
-
-	env := []string{
-		"HOME=" + home,
-		"PATH=" + path,
-		"TERM=dumb",
-		"NO_COLOR=1",
-		"GOOGLE_APPLICATION_CREDENTIALS=" + credFile,
-		"GOOGLE_CLOUD_PROJECT=" + vertexProject,
-		"VERTEX_LOCATION=" + vertexLocation,
-		"OPENCODE_CONFIG_CONTENT=" + openCodeConfig,
+	effortLabel := effort
+	if effortLabel == "" {
+		effortLabel = "omitted"
 	}
-
-	fmt.Println("Starting opencode review...")
+	fmt.Printf("Starting model review (backend=%s, model=%s, effort=%s, structured-output=%t)...\n",
+		backend.Backend, modelID, effortLabel, schema != nil)
 	startedAt := time.Now()
 
 	stopHeartbeat := make(chan struct{})
@@ -204,32 +183,36 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}()
 
-	runCtx, cancel := context.WithTimeout(ctx, openCodeTimeout)
-	defer cancel()
-
-	result, err := opts.Runner.Run(runCtx, "opencode", []string{
-		"run",
-		"--agent", "paco-reviewer",
-		"--model", opts.Model,
-	}, env, []byte(prompt))
+	result, err := backend.Client.Complete(runCtx, model.Request{
+		System:    systemPrompt,
+		Prompt:    prompt,
+		Model:     modelID,
+		Effort:    effort,
+		Schema:    schema,
+		MaxTokens: maxOutputTokens,
+	})
 
 	close(stopHeartbeat)
 	elapsed := time.Since(startedAt)
 
-	if err != nil || result.ExitCode != 0 {
-		stderr := security.Redact(string(result.Stderr))
-		if len(stderr) > 4000 {
-			stderr = stderr[:4000]
+	if err != nil {
+		fmt.Printf("--- model error (scrubbed) ---\n%s\n", scrub(err.Error()))
+		var incomplete *model.IncompleteError
+		switch {
+		case errors.As(err, &incomplete):
+			return writeFail("Paco: " + incomplete.Error() + ".")
+		case errors.Is(err, context.DeadlineExceeded):
+			return writeFail(fmt.Sprintf("Paco: the model review timed out after %ds.", int(reviewTimeout.Seconds())))
+		default:
+			return writeFail("Paco: the model backend returned an error; check the PipelineRun logs.")
 		}
-		fmt.Printf("--- opencode stderr (scrubbed) ---\n%s\n", stderr)
-		return writeFail("Paco: the Gemini/OpenCode backend exited with an error; check the PipelineRun logs.")
 	}
-	fmt.Printf("OpenCode completed in %ds; validating review output\n", int(elapsed.Seconds()))
+	fmt.Printf("Model completed in %ds; validating review output\n", int(elapsed.Seconds()))
 
-	rawOutput := string(result.Stdout)
+	rawOutput := result.Text
 
 	// Secret scan model output
-	if reason := security.ScanSecrets(rawOutput, creds.ClientEmail); reason != "" {
+	if reason := security.ScanSecrets(rawOutput, backend.Secrets...); reason != "" {
 		fmt.Printf("Security filter tripped: %s; withholding review.\n", reason)
 		if err := ws.Write(artifact.FileSecurityBlock, []byte(reason+"\n")); err != nil {
 			return err
@@ -241,11 +224,7 @@ func Run(ctx context.Context, opts Options) error {
 	// Extract JSON review from model output
 	review, err := ExtractReview(rawOutput)
 	if err != nil || review == nil {
-		scrubbedOutput := security.Redact(rawOutput)
-		if len(scrubbedOutput) > 4000 {
-			scrubbedOutput = scrubbedOutput[:4000]
-		}
-		fmt.Printf("--- unparsable opencode output (scrubbed) ---\n%s\n", scrubbedOutput)
+		fmt.Printf("--- unparsable model output (scrubbed) ---\n%s\n", scrub(rawOutput))
 		return writeFail("Paco: the model returned output that could not be parsed as a review.")
 	}
 

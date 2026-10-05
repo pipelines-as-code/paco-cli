@@ -95,10 +95,8 @@ func TestBuildInlineComments(t *testing.T) {
 			assert.Equal(t, len(result), tt.want)
 
 			for _, c := range result {
-				body, ok := c["body"].(string)
-				assert.Assert(t, ok, "body should be a string")
-				assert.Assert(t, len(body) > 0, "body should not be empty")
-				assert.Equal(t, c["side"], "RIGHT")
+				assert.Assert(t, len(c.Body) > 0, "body should not be empty")
+				assert.Equal(t, c.Side, "RIGHT")
 			}
 		})
 	}
@@ -123,7 +121,7 @@ func TestBuildInlineCommentsSeverityFormatting(t *testing.T) {
 			comments := []review.Comment{{Path: "a.go", Line: 1, Severity: tt.severity, Body: "issue"}}
 			result := buildInlineComments(comments, validLines, existingInline)
 			assert.Equal(t, len(result), 1)
-			body := result[0]["body"].(string)
+			body := result[0].Body
 			assert.Assert(t, len(body) > 0 && body[:len(tt.wantTag)] == tt.wantTag, "expected %s prefix, got %s", tt.wantTag, body)
 		})
 	}

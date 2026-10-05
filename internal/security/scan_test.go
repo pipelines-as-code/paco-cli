@@ -55,6 +55,16 @@ func TestScanSecrets(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "anthropic api key",
+			text: "found sk-ant-api03-ABCDEFGHIJ_klmnopqrst-uvw in output",
+			want: "anthropic-key-pattern",
+		},
+		{
+			name: "anthropic prefix too short does not match",
+			text: "sk-ant-short",
+			want: "",
+		},
+		{
 			name: "github PAT",
 			text: "github_pat_ABCDEFGHIJ1234567890_morestuff",
 			want: "github-pat-pattern",

@@ -40,8 +40,10 @@ Tests use `gotest.tools/v3/assert` and follow PAC conventions:
 - PascalCase test function names, no underscores
 - Descriptive `name` field for `t.Run` subtests
 
-External commands (`gh`, `opencode`) are tested via fake scripts
-placed first in `PATH` using `t.Setenv`. No network access required.
+GitHub and Claude are tested against `httptest` servers. Use
+`internal/ghclient/ghtest` for a fake GitHub API that records every
+request; model tests inject a fake HTTP transport. No network access
+required.
 
 ## Code Layout
 
@@ -51,7 +53,11 @@ internal/cli/root.go        # cobra root, subcommand registration
 internal/diff/              # paco diff: fetch, parse, feedback
 internal/review/            # paco review: prompt, extract, normalize
 internal/post/              # paco post: sticky, labels, inline review
-internal/command/            # subprocess runner interface
+internal/ghclient/            # GitHub API client (REST and GraphQL)
+internal/ghclient/ghtest/     # fake GitHub API for tests
+internal/model/              # Claude client (Vertex AI or Anthropic API)
+internal/httpsafe/           # redirect and origin checks
+internal/toolchain/          # base-branch language version detection
 internal/artifact/           # workspace file helpers
 internal/security/           # redaction and secret scanning
 ```

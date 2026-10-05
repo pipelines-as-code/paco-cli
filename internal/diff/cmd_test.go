@@ -3,147 +3,243 @@ package diff
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"net/url"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
-	"github.com/pipelines-as-code/paco-cli/internal/command"
+	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
+	"github.com/pipelines-as-code/paco-cli/internal/ghclient/ghtest"
 	"gotest.tools/v3/assert"
 )
 
-func setupFakeGH(t *testing.T, script string) string {
+const simpleDiff = "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1,2 @@\n package a\n+var x = 1\n"
+
+// fakeGitHub adds diff-specific fixtures on top of ghtest.Fake.
+type fakeGitHub struct{ *ghtest.Fake }
+
+func newFakeGitHub(t *testing.T) (*fakeGitHub, *ghclient.Client) {
 	t.Helper()
-	binDir := t.TempDir()
-	ghPath := filepath.Join(binDir, "gh")
-	err := os.WriteFile(ghPath, []byte("#!/bin/sh\n"+script), 0o755)
-	assert.NilError(t, err)
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
-	return binDir
+	f, c := ghtest.New(t)
+	return &fakeGitHub{f}, c
 }
 
-func TestRunTokenCheckFails(t *testing.T) {
-	ws := t.TempDir()
-	setupFakeGH(t, `exit 1`)
+func (f *fakeGitHub) json(key, body string) { f.JSON(key, body) }
 
-	err := Run(context.Background(), Options{
-		Repo:      "owner/repo",
-		PRNumber:  "1",
-		Workspace: ws,
-		Runner:    &command.ExecRunner{},
+func (f *fakeGitHub) called(key string) bool { return f.Called(key) }
+
+// pullRequest serves both the JSON and the raw diff representations of a PR.
+func (f *fakeGitHub) pullRequest(base, diff string) {
+	f.Handle("GET /repos/owner/repo/pulls/1", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Accept"), "diff") {
+			_, _ = io.WriteString(w, diff)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"number":1,"head":{"sha":"abc123"},"base":{"ref":%q}}`, base)
 	})
-	assert.NilError(t, err)
-
-	errData, readErr := os.ReadFile(filepath.Join(ws, artifact.FileError))
-	assert.NilError(t, readErr)
-	assert.Assert(t, len(errData) > 0, "expected .paco-error to be written")
 }
 
-func TestRunDiffTooLarge(t *testing.T) {
-	ws := t.TempDir()
+func (f *fakeGitHub) file(path, ref, content string) {
+	f.Handle("GET /repos/owner/repo/contents/"+path, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") != ref {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"type":"file","encoding":"base64","name":%q,"path":%q,"content":%q}`,
+			filepath.Base(path), path, base64.StdEncoding.EncodeToString([]byte(content)))
+	})
+}
 
-	largeFile := filepath.Join(t.TempDir(), "large.txt")
-	large := make([]byte, 200001)
-	for i := range large {
-		large[i] = 'x'
+// happyPath registers everything a successful run touches with no feedback.
+func happyPath(f *fakeGitHub, diff string) {
+	f.json("GET /repos/owner/repo", `{"id":1}`)
+	f.json("POST /repos/owner/repo/issues/1/reactions", `{}`)
+	f.pullRequest("main", diff)
+	f.json("POST /graphql", `{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
+	f.json("GET /repos/owner/repo/pulls/1/reviews", `[]`)
+	f.json("GET /repos/owner/repo/issues/1/comments", `[]`)
+}
+
+func readSkip(t *testing.T, ws string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(ws, artifact.FileError))
+	assert.NilError(t, err)
+	return strings.TrimSpace(string(data))
+}
+
+func TestRunSkips(t *testing.T) {
+	tests := []struct {
+		name  string
+		repo  string
+		noGH  bool
+		setup func(f *fakeGitHub)
+		want  string
+	}{
+		{
+			name: "missing token",
+			noGH: true,
+			want: "Paco: could not configure GitHub access: no GitHub token: set GH_TOKEN or GITHUB_TOKEN.",
+		},
+		{
+			name: "invalid repo",
+			repo: "not-a-repo",
+			want: "Paco: invalid repo format: not-a-repo.",
+		},
+		{
+			name:  "token cannot access the repo",
+			setup: func(*fakeGitHub) {},
+			want:  "Paco: the Pipelines-as-Code GitHub App token could not access owner/repo.",
+		},
+		{
+			name:  "pull request lookup fails",
+			setup: func(f *fakeGitHub) { f.json("GET /repos/owner/repo", `{"id":1}`) },
+			want:  "Paco: could not look up pull request #1 on owner/repo.",
+		},
+		{
+			name: "pull request refs missing",
+			setup: func(f *fakeGitHub) {
+				f.json("GET /repos/owner/repo", `{"id":1}`)
+				f.json("GET /repos/owner/repo/pulls/1", `{"number":1}`)
+			},
+			want: "Paco: could not read pull request #1 refs on owner/repo.",
+		},
+		{
+			name: "diff fetch fails",
+			setup: func(f *fakeGitHub) {
+				f.json("GET /repos/owner/repo", `{"id":1}`)
+				f.Handle("GET /repos/owner/repo/pulls/1", func(w http.ResponseWriter, r *http.Request) {
+					if strings.Contains(r.Header.Get("Accept"), "diff") {
+						w.WriteHeader(http.StatusNotAcceptable)
+						return
+					}
+					_, _ = io.WriteString(w, `{"head":{"sha":"abc123"},"base":{"ref":"main"}}`)
+				})
+			},
+			want: "Paco: could not fetch the diff for pull request #1.",
+		},
+		{
+			name:  "diff too large",
+			setup: func(f *fakeGitHub) { happyPath(f, strings.Repeat("x", maxDiffBytes+1)) },
+			want:  "Paco: PR diff is too large (200001 bytes, limit is 200000), so review was skipped instead of using a truncated diff.",
+		},
 	}
-	assert.NilError(t, os.WriteFile(largeFile, large, 0o644))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GH_TOKEN", "")
+			t.Setenv("GITHUB_TOKEN", "")
+			ws := t.TempDir()
+			opts := Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws}
+			if tt.repo != "" {
+				opts.Repo = tt.repo
+			}
+			if !tt.noGH {
+				f, c := newFakeGitHub(t)
+				if tt.setup != nil {
+					tt.setup(f)
+				}
+				opts.GitHub = c
+			}
 
-	setupFakeGH(t, `
-case "$1 $2" in
-  "api repos/"*) echo '{"id":1}'; exit 0 ;;
-  "pr view"*) echo '{"headRefOid":"abc123","baseRefName":"main"}'; exit 0 ;;
-  "pr diff"*) cat `+largeFile+`; exit 0 ;;
-  *) exit 0 ;;
-esac
-`)
-
-	err := Run(context.Background(), Options{
-		Repo:      "owner/repo",
-		PRNumber:  "1",
-		Workspace: ws,
-		Runner:    &command.ExecRunner{},
-	})
-	assert.NilError(t, err)
-
-	errData, _ := os.ReadFile(filepath.Join(ws, artifact.FileError))
-	assert.Assert(t, len(errData) > 0, "expected .paco-error for oversized diff")
+			assert.NilError(t, Run(context.Background(), opts))
+			assert.Equal(t, readSkip(t, ws), tt.want)
+		})
+	}
 }
 
 func TestRunSuccess(t *testing.T) {
 	ws := t.TempDir()
-	diff := `diff --git a/foo.go b/foo.go
---- a/foo.go
-+++ b/foo.go
-@@ -1,2 +1,3 @@
- package foo
-+var x = 1
-`
-	diffFile := filepath.Join(t.TempDir(), "test.diff")
-	assert.NilError(t, os.WriteFile(diffFile, []byte(diff), 0o644))
+	f, c := newFakeGitHub(t)
+	happyPath(f, simpleDiff)
 
-	setupFakeGH(t, `
-case "$1 $2" in
-  "api repos/"*) echo '{"id":1}'; exit 0 ;;
-  "pr view"*) echo '{"headRefOid":"abc123","baseRefName":"main"}'; exit 0 ;;
-  "pr diff"*) cat `+diffFile+`; exit 0 ;;
-  *) exit 0 ;;
-esac
-`)
+	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: c}))
 
-	err := Run(context.Background(), Options{
-		Repo:      "owner/repo",
-		PRNumber:  "1",
-		Workspace: ws,
-		Runner:    &command.ExecRunner{},
-	})
-	assert.NilError(t, err)
-
-	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileDiff)))
-	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileValidLines)))
-	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileHeadSHA)))
-	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileExistingInline)))
-	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileExistingFeedback)))
-
+	assert.Assert(t, !fileExists(filepath.Join(ws, artifact.FileError)))
+	for _, name := range []string{artifact.FileDiff, artifact.FileValidLines, artifact.FileExistingInline, artifact.FileExistingFeedback} {
+		assert.Assert(t, fileExists(filepath.Join(ws, name)), name)
+	}
 	headSHA, _ := os.ReadFile(filepath.Join(ws, artifact.FileHeadSHA))
 	assert.Equal(t, string(headSHA), "abc123")
+	validLines, _ := os.ReadFile(filepath.Join(ws, artifact.FileValidLines))
+	assert.Equal(t, string(validLines), `{"a.go":{"2":true}}`)
+	assert.Assert(t, f.called("POST /repos/owner/repo/issues/1/reactions"), "eyes reaction on the PR")
+}
+
+func TestRunReactsToTriggerComment(t *testing.T) {
+	f, c := newFakeGitHub(t)
+	happyPath(f, simpleDiff)
+	var content string
+	f.Handle("POST /repos/owner/repo/issues/comments/55/reactions", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		content = body["content"]
+		_, _ = io.WriteString(w, `{}`)
+	})
+
+	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, CommentID: "55", Workspace: t.TempDir(), GitHub: c}))
+	assert.Equal(t, content, "eyes")
+	assert.Assert(t, !f.called("POST /repos/owner/repo/issues/1/reactions"))
 }
 
 func TestRunRedactsCredentials(t *testing.T) {
 	ws := t.TempDir()
-	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,2 +1,3 @@\n package a\n+token := \"ghp_ABCDEFghijklmnopqrstuvwx\"\n"
-	diffFile := filepath.Join(t.TempDir(), "test.diff")
-	assert.NilError(t, os.WriteFile(diffFile, []byte(diff), 0o644))
+	f, c := newFakeGitHub(t)
+	happyPath(f, "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,2 +1,3 @@\n package a\n+token := \"ghp_ABCDEFghijklmnopqrstuvwx\"\n")
 
-	setupFakeGH(t, `
-case "$1 $2" in
-  "api repos/"*) echo '{"id":1}'; exit 0 ;;
-  "pr view"*) echo '{"headRefOid":"abc123","baseRefName":"main"}'; exit 0 ;;
-  "pr diff"*) cat `+diffFile+`; exit 0 ;;
-  *) exit 0 ;;
-esac
-`)
-
-	err := Run(context.Background(), Options{
-		Repo:      "owner/repo",
-		PRNumber:  "1",
-		Workspace: ws,
-		Runner:    &command.ExecRunner{},
-	})
-	assert.NilError(t, err)
+	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: c}))
 
 	diffContent, _ := os.ReadFile(filepath.Join(ws, artifact.FileDiff))
 	assert.Assert(t, !strings.Contains(string(diffContent), "ghp_ABCDEFghijklmnopqrstuvwx"), "diff should be redacted")
 	assert.Assert(t, strings.Contains(string(diffContent), "[REDACTED]"), "diff should contain [REDACTED]")
 }
 
-func TestRunToolchains(t *testing.T) {
-	diffFile := filepath.Join(t.TempDir(), "test.diff")
-	assert.NilError(t, os.WriteFile(diffFile, []byte("diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1,2 @@\n package a\n+var x = 1\n"), 0o644))
+func TestRunExistingFeedback(t *testing.T) {
+	ws := t.TempDir()
+	f, c := newFakeGitHub(t)
+	happyPath(f, simpleDiff)
+	f.json("POST /graphql", `{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
+		{"isResolved":false,"comments":{"nodes":[
+			{"path":"a.go","line":2,"body":"rename this","author":{"login":"alice"},"pullRequestReview":{"state":"COMMENTED"}},
+			{"path":"a.go","line":null,"originalLine":1,"body":"outdated note","author":{"login":"alice"},"pullRequestReview":null},
+			{"path":"b.go","line":9,"body":"drive-by","author":{"login":"eve"},"pullRequestReview":{"state":"COMMENTED"}}
+		]}},
+		{"isResolved":true,"comments":{"nodes":[
+			{"path":"c.go","line":3,"body":"done","author":{"login":"alice"},"pullRequestReview":{"state":"COMMENTED"}}
+		]}}
+	]}}}}}`)
+	f.json("GET /repos/owner/repo/pulls/1/reviews", `[
+		{"user":{"login":"bob"},"body":"Looks fine\nmostly","state":"APPROVED"},
+		{"user":{"login":"bob"},"body":"## Paco Review\nold","state":"COMMENTED"}
+	]`)
+	f.json("GET /repos/owner/repo/issues/1/comments", `[
+		{"id":1,"user":{"login":"alice"},"body":"please add tests"},
+		{"id":2,"user":{"login":"paco-bot"},"body":"<!-- paco-review -->\nsticky"}
+	]`)
+	f.json("GET /repos/owner/repo/collaborators/alice/permission", `{"permission":"write"}`)
+	f.json("GET /repos/owner/repo/collaborators/bob/permission", `{"permission":"admin"}`)
+	f.json("GET /repos/owner/repo/collaborators/eve/permission", `{"permission":"read"}`)
+	// paco-bot's permission lookup 404s and is treated as untrusted.
 
+	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: c}))
+
+	feedback, err := os.ReadFile(filepath.Join(ws, artifact.FileExistingFeedback))
+	assert.NilError(t, err)
+	assert.Equal(t, string(feedback), strings.Join([]string{
+		"- alice on a.go:2: rename this",
+		"- alice on a.go:1: outdated note",
+		"- review by bob: Looks fine mostly",
+		"- comment by alice: please add tests",
+	}, "\n"))
+	inline, err := os.ReadFile(filepath.Join(ws, artifact.FileExistingInline))
+	assert.NilError(t, err)
+	assert.Equal(t, string(inline), `{"a.go":{"1":true,"2":true}}`)
+}
+
+func TestRunToolchains(t *testing.T) {
 	tests := []struct {
 		name       string
 		baseBranch string
@@ -186,7 +282,6 @@ func TestRunToolchains(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := t.TempDir()
-			fixtures := t.TempDir()
 			workspace := &artifact.Workspace{Dir: ws}
 			assert.NilError(t, workspace.Write(artifact.FileToolchains, []byte("Go\t9.99\tgo.mod\n")))
 			assert.NilError(t, workspace.Write(artifact.FileReviewRules, []byte("stale rules\n")))
@@ -194,44 +289,28 @@ func TestRunToolchains(t *testing.T) {
 			if baseBranch == "" {
 				baseBranch = "main"
 			}
-			ref := url.QueryEscape(baseBranch)
 
-			listing := "exit 1"
+			f, c := newFakeGitHub(t)
+			happyPath(f, simpleDiff)
+			f.pullRequest(baseBranch, simpleDiff)
 			if !tt.listErr {
-				listFile := filepath.Join(fixtures, "listing")
-				assert.NilError(t, os.WriteFile(listFile, []byte(strings.Join(tt.root, "\n")+"\n"), 0o644))
-				listing = "cat " + listFile + "; exit 0"
+				f.Handle("GET /repos/owner/repo/contents/", func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, r.URL.Query().Get("ref"), baseBranch)
+					entries := []map[string]string{{"type": "dir", "name": "docs"}}
+					for _, name := range tt.root {
+						entries = append(entries, map[string]string{"type": "file", "name": name})
+					}
+					_ = json.NewEncoder(w).Encode(entries)
+				})
 			}
-			var fileCases strings.Builder
 			for name, content := range tt.files {
-				f := filepath.Join(fixtures, name+".b64")
-				assert.NilError(t, os.WriteFile(f, []byte(base64.StdEncoding.EncodeToString([]byte(content))+"\n"), 0o644))
-				fmt.Fprintf(&fileCases, "  \"api repos/owner/repo/contents/%s?ref=%s\") cat %s; exit 0 ;;\n", name, ref, f)
+				f.file(name, baseBranch, content)
 			}
 			if tt.rules != "" {
-				f := filepath.Join(fixtures, "rules.b64")
-				assert.NilError(t, os.WriteFile(f, []byte(base64.StdEncoding.EncodeToString([]byte(tt.rules))+"\n"), 0o644))
-				fmt.Fprintf(&fileCases, "  \"api repos/owner/repo/contents/.tekton/ai/REVIEW.md?ref=%s\") cat %s; exit 0 ;;\n", ref, f)
+				f.file(".tekton/ai/REVIEW.md", baseBranch, tt.rules)
 			}
 
-			setupFakeGH(t, `
-case "$1 $2" in
-  "api repos/owner/repo/contents?ref=`+ref+`") `+listing+` ;;
-`+fileCases.String()+`  "api repos/owner/repo/contents"*) exit 1 ;;
-  "api repos/"*) echo '{"id":1}'; exit 0 ;;
-  "pr view"*) echo '{"headRefOid":"abc123","baseRefName":"`+baseBranch+`"}'; exit 0 ;;
-  "pr diff"*) cat `+diffFile+`; exit 0 ;;
-  *) exit 0 ;;
-esac
-`)
-
-			err := Run(context.Background(), Options{
-				Repo:      "owner/repo",
-				PRNumber:  "1",
-				Workspace: ws,
-				Runner:    &command.ExecRunner{},
-			})
-			assert.NilError(t, err)
+			assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: c}))
 
 			got, readErr := os.ReadFile(filepath.Join(ws, artifact.FileToolchains))
 			if tt.want == "" {

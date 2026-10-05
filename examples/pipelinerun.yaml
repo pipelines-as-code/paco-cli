@@ -3,6 +3,9 @@
 # Copy this file to .tekton/paco.yaml in your repository and update
 # the values marked CHANGEME below.
 #
+# This example uses Claude on Vertex AI. For the Anthropic API, see
+# pipelinerun-anthropic.yaml.
+#
 # Triggers:
 #   - Automatically on pull_request opened/reopened to "main".
 #   - On-demand via a "/paco review" or "/paco summary" PR comment.
@@ -36,11 +39,15 @@ spec:
       value: "{{ cel: has(body.comment) && has(body.comment.id) ? string(body.comment.id) : '' }}"
     - name: git_auth_secret
       value: "{{git_auth_secret}}"
-    # CHANGEME: model identifier for the review step.
+    # CHANGEME: any image that ships the paco binary and CA certificates.
+    # paco needs no shell or other tools.
+    - name: image
+      value: "ghcr.io/chmouel/agents-image:latest"
+    # Optional: Claude model id. Empty means claude-opus-4-6@default.
     - name: model
-      value: "google-vertex-anthropic/claude-sonnet-5@default"
-    # Optional: reasoning effort for the LLM.
-    # One of none, minimal, low, medium, high, xhigh, max. Empty means minimal.
+      value: ""
+    # Optional: reasoning effort for the model.
+    # One of low, medium, high, xhigh, max. Empty means low.
     - name: reasoning_effort
       value: ""
     # CHANGEME: name of the Kubernetes secret holding Vertex AI credentials.
@@ -63,8 +70,10 @@ spec:
       - name: comment_id
         default: ""
       - name: git_auth_secret
+      - name: image
+        default: "ghcr.io/chmouel/agents-image:latest"
       - name: model
-        default: "google-vertex-anthropic/claude-sonnet-5@default"
+        default: ""
       - name: reasoning_effort
         default: ""
       - name: vertex_credentials_secret
@@ -84,26 +93,24 @@ spec:
             # Step 1 — Fetch the PR diff and existing feedback.
             - name: compute-diff
               displayName: "Fetch PR diff via paco"
-              image: ghcr.io/chmouel/agents-image:latest
+              image: "$(params.image)"
               env:
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef:
                       name: "$(params.git_auth_secret)"
                       key: "git-provider-token"
-              script: |
-                #!/usr/bin/env bash
-                set -euo pipefail
-                paco diff \
-                  --repo "$(params.repo_owner)/$(params.repo_name)" \
-                  --pr "$(params.pull_request_number)" \
-                  --comment-id "$(params.comment_id)" \
-                  --workspace "$(workspaces.source.path)"
+              command: ["paco", "diff"]
+              args:
+                - "--repo=$(params.repo_owner)/$(params.repo_name)"
+                - "--pr=$(params.pull_request_number)"
+                - "--comment-id=$(params.comment_id)"
+                - "--workspace=$(workspaces.source.path)"
 
             # Step 2 — Run the AI review.
             - name: paco-review
               displayName: "Run Paco review"
-              image: ghcr.io/chmouel/agents-image:latest
+              image: "$(params.image)"
               volumeMounts:
                 - name: vertex-credentials
                   mountPath: /var/run/secrets/paco-vertex
@@ -117,33 +124,27 @@ spec:
                   value: "$(params.vertex_location)"
                 - name: TRIGGER_COMMENT
                   value: "$(params.trigger_comment)"
-              script: |
-                #!/usr/bin/env bash
-                set -euo pipefail
-                export HOME=/tmp/opencode-home
-                mkdir -p "${HOME}"
-                paco review \
-                  --workspace "$(workspaces.source.path)" \
-                  --model "$(params.model)" \
-                  --reasoning-effort "$(params.reasoning_effort)"
+              command: ["paco", "review"]
+              args:
+                - "--workspace=$(workspaces.source.path)"
+                - "--model=$(params.model)"
+                - "--reasoning-effort=$(params.reasoning_effort)"
 
             # Step 3 — Post the review results to the pull request.
             - name: post-review
               displayName: "Post review to the pull request"
-              image: ghcr.io/chmouel/agents-image:latest
+              image: "$(params.image)"
               env:
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef:
                       name: "$(params.git_auth_secret)"
                       key: "git-provider-token"
-              script: |
-                #!/usr/bin/env bash
-                set -euo pipefail
-                paco post \
-                  --repo "$(params.repo_owner)/$(params.repo_name)" \
-                  --pr "$(params.pull_request_number)" \
-                  --workspace "$(workspaces.source.path)"
+              command: ["paco", "post"]
+              args:
+                - "--repo=$(params.repo_owner)/$(params.repo_name)"
+                - "--pr=$(params.pull_request_number)"
+                - "--workspace=$(workspaces.source.path)"
           volumes:
             - name: vertex-credentials
               secret:

@@ -38,12 +38,15 @@ func postVerified(ctx context.Context, ws *artifact.Workspace, gh *ghclient.Clie
 	if err != nil || strings.TrimSpace(string(headData)) != status.HeadSHA {
 		return errors.New("verified review does not match workspace head")
 	}
-	head, _, err := gh.PullRequestRefs(ctx, repo, pr)
+	refs, err := gh.PullRequestMetadata(ctx, repo, pr)
 	if err != nil {
 		return fmt.Errorf("checking reviewed commit: %s", security.Scrub(err.Error(), gh.Token()))
 	}
-	if head != status.HeadSHA {
+	if refs.HeadSHA != status.HeadSHA {
 		return errors.New("pull request head changed; rerun diff and review before posting")
+	}
+	if refs.BaseRef != status.BaseRef || refs.TargetBaseSHA != status.TargetBaseSHA {
+		return errors.New("pull request base changed; rerun diff and review before posting")
 	}
 
 	if status.State == "failed" || ws.Exists(artifact.FileFailed) {

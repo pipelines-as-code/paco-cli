@@ -9,6 +9,8 @@ type FileDiff struct {
 	OldPath string `json:"old_path"`
 	NewPath string `json:"new_path"`
 	Status  string `json:"status"`
+	OldMode string `json:"old_mode,omitempty"`
+	NewMode string `json:"new_mode,omitempty"`
 	Binary  bool   `json:"binary,omitempty"`
 	Hunks   []Hunk `json:"hunks"`
 }

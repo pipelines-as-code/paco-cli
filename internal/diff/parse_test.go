@@ -86,7 +86,7 @@ func TestParseSpecialFiles(t *testing.T) {
 		{name: "new", text: "diff --git a/new b/new\nnew file mode 100644\n--- /dev/null\n+++ b/new\n@@ -0,0 +1 @@\n+new\n", newPath: "new", status: "added"},
 		{name: "deleted", text: "diff --git a/old b/old\ndeleted file mode 100644\n--- a/old\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n", oldPath: "old", status: "deleted"},
 		{name: "rename without hunks", text: "diff --git a/old b/new\nsimilarity index 100%\nrename from old\nrename to new\n", oldPath: "old", newPath: "new", status: "renamed"},
-		{name: "quoted octal", text: "diff --git \"a/caf\\303\\251\" \"b/caf\\303\\251\"\n--- \"a/caf\\303\\251\"\n+++ \"b/caf\\303\\251\"\n@@ -1 +1 @@\n-old\n+new\n", oldPath: "caf\u00e9", newPath: "caf\u00e9", status: "modified"},
+		{name: "quoted octal", text: "diff --git \"a/calf\\303\\251\" \"b/calf\\303\\251\"\n--- \"a/calf\\303\\251\"\n+++ \"b/calf\\303\\251\"\n@@ -1 +1 @@\n-old\n+new\n", oldPath: "calf\u00e9", newPath: "calf\u00e9", status: "modified"},
 		{name: "spaces", text: "diff --git a/a b.txt b/a b.txt\n--- a/a b.txt\n+++ b/a b.txt\n@@ -1 +1 @@\n-old\n+new\n", oldPath: "a b.txt", newPath: "a b.txt", status: "modified"},
 		{name: "space path tab delimiter", text: "diff --git a/a b.txt b/a b.txt\n--- a/a b.txt\t\n+++ b/a b.txt\t\n@@ -1 +1 @@\n-old\n+new\n", oldPath: "a b.txt", newPath: "a b.txt", status: "modified"},
 		{name: "mode only ambiguous space", text: "diff --git a/space b/name b/space b/name\nold mode 100644\nnew mode 100755\n", oldPath: "space b/name", newPath: "space b/name", status: "modified"},
@@ -118,6 +118,27 @@ func TestParseLongAndIncompleteLines(t *testing.T) {
 	parsed, err = Parse("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,3 +1,3 @@\n line\n")
 	assert.NilError(t, err)
 	assert.Assert(t, !parsed.Files[0].Hunks[0].Complete)
+}
+
+func TestParseFileModes(t *testing.T) {
+	tests := []struct {
+		name, metadata, oldMode, newMode string
+	}{
+		{name: "remove executable", metadata: "old mode 100755\nnew mode 100644\n", oldMode: "100755", newMode: "100644"},
+		{name: "add executable", metadata: "old mode 100644\nnew mode 100755\n", oldMode: "100644", newMode: "100755"},
+		{name: "new executable", metadata: "new file mode 100755\n", newMode: "100755"},
+		{name: "deleted executable", metadata: "deleted file mode 100755\n", oldMode: "100755"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := Parse("diff --git a/script.sh b/script.sh\n" + tt.metadata)
+			assert.NilError(t, err)
+			assert.Equal(t, len(parsed.Files), 1)
+			assert.Equal(t, parsed.Files[0].OldMode, tt.oldMode)
+			assert.Equal(t, parsed.Files[0].NewMode, tt.newMode)
+			assert.Equal(t, len(ValidLines(parsed)), 0, "mode changes must not manufacture line anchors")
+		})
+	}
 }
 
 func TestParseRejectsMalformedDiff(t *testing.T) {

@@ -109,7 +109,7 @@ The prompt always asks for the review JSON. By default the API does not
 enforce a schema, because web search is incompatible with it. Pass
 `--web-search=false --no-structured-output=false` to send the schema.
 Either way, Paco parses, normalizes, and secret-scans the output, and
-unparseable output produces failure artifacts.
+unparsable output produces failure artifacts.
 
 The response is streamed with extended thinking disabled. A token-limit
 stop, refusal, truncated stream, or the 900-second timeout produces a

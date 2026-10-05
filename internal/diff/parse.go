@@ -138,8 +138,14 @@ func Parse(text string) (*ParsedDiff, error) {
 			file.Status = "copied"
 		case strings.HasPrefix(line, "new file mode "):
 			file.OldPath, file.Status = "", "added"
+			file.NewMode = strings.TrimPrefix(line, "new file mode ")
 		case strings.HasPrefix(line, "deleted file mode "):
 			file.NewPath, file.Status = "", "deleted"
+			file.OldMode = strings.TrimPrefix(line, "deleted file mode ")
+		case strings.HasPrefix(line, "old mode "):
+			file.OldMode = strings.TrimPrefix(line, "old mode ")
+		case strings.HasPrefix(line, "new mode "):
+			file.NewMode = strings.TrimPrefix(line, "new mode ")
 		case strings.HasPrefix(line, "Binary files "), line == "GIT binary patch":
 			file.Binary = true
 		}

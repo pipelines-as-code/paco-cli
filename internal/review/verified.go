@@ -69,7 +69,7 @@ func loadVerifiedInput(ws *artifact.Workspace, secrets []string, noExploration b
 	if err != nil {
 		return nil, err
 	}
-	if manifest.Version != 1 || manifest.HeadSHA == "" || manifest.Repo == "" ||
+	if manifest.Version != 1 || manifest.HeadSHA == "" || manifest.BaseRef == "" || manifest.Repo == "" ||
 		manifest.PRNumber < 1 || manifest.HeadSHA != strings.TrimSpace(string(head)) ||
 		manifest.DiffDigest != Digest(diffData) {
 		return nil, errors.New("diff metadata does not match review inputs")
@@ -172,6 +172,9 @@ func buildEvidenceContext(parsed *source.Diff, head, before *source.Snapshot) (e
 	var numbered strings.Builder
 	for _, file := range parsed.Files {
 		fmt.Fprintf(&numbered, "\nFile before=%q head=%q status=%s\n", file.OldPath, file.NewPath, file.Status)
+		if file.OldMode != "" || file.NewMode != "" {
+			fmt.Fprintf(&numbered, "File modes before=%q head=%q\n", file.OldMode, file.NewMode)
+		}
 		for _, hunk := range file.Hunks {
 			for _, line := range hunk.Lines {
 				add("before", file.OldPath, line.OldLine, line.Content, line.Kind == "delete")
@@ -221,15 +224,22 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		return fail(err)
 	}
 	status.HeadSHA, status.Repo, status.PRNumber = input.manifest.HeadSHA, input.manifest.Repo, input.manifest.PRNumber
+	status.BaseRef, status.TargetBaseSHA = input.manifest.BaseRef, input.manifest.TargetBaseSHA
 	status.Limitations = append(status.Limitations, input.manifest.Limitations...)
 	if input.manifest.ContextStatus == "partial" {
 		status.Limitations = append(status.Limitations, "Collection reported incomplete context.")
 	}
+	binary := false
 	for _, file := range input.tools.Diff.Files {
-		if file.Binary {
-			status.Limitations = append(status.Limitations, "Binary file changes were not reviewed.")
-			break
+		if file.OldMode != "" && file.NewMode != "" && file.OldMode != file.NewMode {
+			status.Limitations = append(status.Limitations, fmt.Sprintf("File-mode change for %q (%s to %s) is outside verified coverage; findings require changed source lines.", file.NewPath, file.OldMode, file.NewMode))
 		}
+		if file.Binary {
+			binary = true
+		}
+	}
+	if binary {
+		status.Limitations = append(status.Limitations, "Binary file changes were not reviewed.")
 	}
 	if input.tools.Head == nil {
 		status.Limitations = append(status.Limitations, "Full head source unavailable; only supplied diff context was reviewed.")

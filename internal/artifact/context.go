@@ -13,6 +13,7 @@ type InputManifest struct {
 	Repo          string       `json:"repo"`
 	PRNumber      int          `json:"pr_number"`
 	HeadSHA       string       `json:"head_sha"`
+	BaseRef       string       `json:"base_ref"`
 	TargetBaseSHA string       `json:"target_base_sha"`
 	MergeBaseSHA  string       `json:"merge_base_sha"`
 	DiffDigest    string       `json:"diff_digest"`

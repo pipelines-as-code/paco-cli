@@ -149,7 +149,7 @@ func Prepare(ws *artifact.Workspace, c Case) (string, error) {
 	}
 	manifest := artifact.InputManifest{
 		Version: 1, Repo: "evaluation/fixture", PRNumber: 1,
-		HeadSHA: headSHA, TargetBaseSHA: beforeSHA, MergeBaseSHA: beforeSHA,
+		HeadSHA: headSHA, BaseRef: "main", TargetBaseSHA: beforeSHA, MergeBaseSHA: beforeSHA,
 		DiffDigest:    review.Digest([]byte(patch.String())),
 		ContextStatus: "complete", Head: artifact.ContextState{Status: "available"},
 		Before: artifact.ContextState{Status: "available"},

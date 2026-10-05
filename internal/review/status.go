@@ -17,21 +17,23 @@ const FileStatus = artifact.FileStatus
 // VerificationStatus binds publication to the exact locally verified output.
 // This is consistency metadata, not a signature against a hostile workspace.
 type VerificationStatus struct {
-	Version      int           `json:"version"`
-	State        string        `json:"state"`
-	HeadSHA      string        `json:"head_sha"`
-	Repo         string        `json:"repo"`
-	PRNumber     int           `json:"pr_number"`
-	ReviewDigest string        `json:"review_digest"`
-	Limitations  []string      `json:"limitations"`
-	Candidates   int           `json:"candidates"`
-	Rejected     int           `json:"rejected"`
-	Duplicates   int           `json:"duplicates"`
-	Accepted     int           `json:"accepted"`
-	Unanchored   int           `json:"unanchored"`
-	Posted       int           `json:"posted"`
-	Decisions    []Disposition `json:"decisions"`
-	Usage        model.Usage   `json:"usage"`
+	Version       int           `json:"version"`
+	State         string        `json:"state"`
+	HeadSHA       string        `json:"head_sha"`
+	BaseRef       string        `json:"base_ref"`
+	TargetBaseSHA string        `json:"target_base_sha"`
+	Repo          string        `json:"repo"`
+	PRNumber      int           `json:"pr_number"`
+	ReviewDigest  string        `json:"review_digest"`
+	Limitations   []string      `json:"limitations"`
+	Candidates    int           `json:"candidates"`
+	Rejected      int           `json:"rejected"`
+	Duplicates    int           `json:"duplicates"`
+	Accepted      int           `json:"accepted"`
+	Unanchored    int           `json:"unanchored"`
+	Posted        int           `json:"posted"`
+	Decisions     []Disposition `json:"decisions"`
+	Usage         model.Usage   `json:"usage"`
 }
 
 type Disposition struct {
@@ -63,7 +65,7 @@ func ReadStatus(ws *artifact.Workspace, reviewData []byte) (*VerificationStatus,
 		return nil, fmt.Errorf("decoding verification status: %w", err)
 	}
 	if status.Version != 1 || status.ReviewDigest != Digest(reviewData) ||
-		status.HeadSHA == "" || status.Repo == "" || status.PRNumber <= 0 {
+		status.HeadSHA == "" || status.BaseRef == "" || status.Repo == "" || status.PRNumber <= 0 {
 		return nil, errors.New("verification status does not match review output")
 	}
 	if status.State != "complete" && status.State != "partial" && status.State != "failed" {

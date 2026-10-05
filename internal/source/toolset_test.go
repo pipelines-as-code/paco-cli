@@ -74,6 +74,17 @@ func TestUnavailableAndBoundedDiffTools(t *testing.T) {
 	assert.Assert(t, strings.Contains(result, "truncated"))
 }
 
+func TestReadDiffModeOnly(t *testing.T) {
+	tools := &Toolset{Diff: &Diff{Files: []FileDiff{{
+		OldPath: "script.sh", NewPath: "script.sh", Status: "modified",
+		OldMode: "100755", NewMode: "100644",
+	}}}}
+	output, err := tools.Call(context.Background(), "read_diff", json.RawMessage(`{"path":"script.sh"}`))
+	assert.NilError(t, err)
+	assert.Assert(t, strings.Contains(output, `File modes: old="100755" new="100644"`))
+	assert.Assert(t, strings.Contains(output, "No text hunks available."))
+}
+
 func TestRevisionSourceQuotes(t *testing.T) {
 	tests := []struct {
 		name string

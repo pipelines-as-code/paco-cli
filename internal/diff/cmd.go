@@ -143,7 +143,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	manifest := artifact.InputManifest{
 		Version: 1, Repo: repo.String(), PRNumber: pr, HeadSHA: refs.HeadSHA,
-		TargetBaseSHA: refs.TargetBaseSHA, DiffDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(redactedDiff))),
+		BaseRef: refs.BaseRef, TargetBaseSHA: refs.TargetBaseSHA, DiffDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(redactedDiff))),
 		ContextStatus: "complete",
 		Head:          artifact.ContextState{Status: "unavailable"},
 		Before:        artifact.ContextState{Status: "unavailable"},
@@ -162,14 +162,14 @@ func Run(ctx context.Context, opts Options) error {
 	fetchReviewRules(ctx, gh, repo, baseRef, ws)
 	fetchToolchains(ctx, gh, repo, baseRef, ws)
 
-	head, headErr := fetchSource(ctx, gh, repo, refs.HeadSHA)
-	if headErr != nil && refs.HeadRepo != "" && refs.HeadRepo != repo.String() {
+	head, headError := fetchSource(ctx, gh, repo, refs.HeadSHA)
+	if headError != nil && refs.HeadRepo != "" && refs.HeadRepo != repo.String() {
 		if fork, parseErr := ghclient.ParseRepo(refs.HeadRepo); parseErr == nil {
-			head, headErr = fetchSource(ctx, gh, fork, refs.HeadSHA)
+			head, headError = fetchSource(ctx, gh, fork, refs.HeadSHA)
 		}
 	}
-	if headErr != nil {
-		manifest.Head.Reason = security.Scrub(headErr.Error(), gh.Token())
+	if headError != nil {
+		manifest.Head.Reason = security.Scrub(headError.Error(), gh.Token())
 	}
 	var before *source.Snapshot
 	if manifest.MergeBaseSHA != "" {

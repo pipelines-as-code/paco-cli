@@ -13,6 +13,10 @@ Each candidate must identify a changed line on side "head" (addition) or "before
 observable impact, and a remedy. Give each candidate a unique ID of at most 64 bytes.
 Evidence must quote exact lines from the supplied diff or snapshot, without
 numbering prefixes. Ranges are inclusive, 1-based, at most 200 lines each.
+Numbered diff lines and file/search results use source_json JSON strings;
+read_diff uses JSON content fields. Decode these values to obtain source.
+Preserve every space and tab, including indentation and trailing whitespace.
+Do not format code or normalize quotes. Join decoded lines with a newline.
 Use revision "head" or "before". At least one reference must include a changed
 line in the finding's file. Establish why the change introduces the defect.
 Include counterevidence you investigated in the evidence, without internal

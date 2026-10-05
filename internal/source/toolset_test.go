@@ -28,8 +28,8 @@ func TestRevisionTools(t *testing.T) {
 		name, tool, input, want string
 		wantErr                 bool
 	}{
-		{name: "default head", tool: "read_file", input: `{"path":"new.go","start_line":1,"end_line":1}`, want: "1: new"},
-		{name: "before read", tool: "read_file", input: `{"revision":"before","path":"old.go","start_line":1,"end_line":1}`, want: "1: old"},
+		{name: "default head", tool: "read_file", input: `{"path":"new.go","start_line":1,"end_line":1}`, want: `1: source_json="new"`},
+		{name: "before read", tool: "read_file", input: `{"revision":"before","path":"old.go","start_line":1,"end_line":1}`, want: `1: source_json="old"`},
 		{name: "before list", tool: "list_files", input: `{"revision":"before"}`, want: "before snapshot; 2 files excluded"},
 		{name: "absent search", tool: "search_code", input: `{"revision":"before","query":"new"}`, want: "No matches in the available snapshot"},
 		{name: "no arbitrary ref", tool: "list_files", input: `{"revision":"main"}`, wantErr: true},
@@ -72,6 +72,67 @@ func TestUnavailableAndBoundedDiffTools(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Assert(t, len(result) <= 16000)
 	assert.Assert(t, strings.Contains(result, "truncated"))
+}
+
+func TestRevisionSourceQuotes(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{name: "spaces", line: " value := 1  "},
+		{name: "tabs", line: "\tvalue := 1\t"},
+		{name: "Python indentation", line: "    return value"},
+		{name: "string whitespace", line: "value := ` a\t  b `"},
+		{name: "escaped string", line: "\tvalue := \"a\\\\b\\\"c\"\r"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := &Snapshot{Files: map[string]string{"file": tt.line}}
+			tools := &Toolset{Head: snapshot, Before: snapshot}
+			for _, revision := range []string{"head", "before"} {
+				for _, name := range []string{"read_file", "search_code"} {
+					args := map[string]any{"revision": revision}
+					if name == "read_file" {
+						args["path"], args["start_line"], args["end_line"] = "file", 1, 1
+					} else {
+						args["query"] = "value"
+					}
+					input, err := json.Marshal(args)
+					assert.NilError(t, err)
+					output, err := tools.Call(context.Background(), name, input)
+					assert.NilError(t, err)
+					_, encoded, ok := strings.Cut(output, "source_json=")
+					assert.Assert(t, ok, output)
+					var decoded string
+					assert.NilError(t, json.Unmarshal([]byte(encoded), &decoded))
+					assert.Equal(t, decoded, tt.line)
+				}
+			}
+			legacy, err := snapshot.Call(context.Background(), "read_file", json.RawMessage(`{"path":"file","start_line":1,"end_line":1}`))
+			assert.NilError(t, err)
+			assert.Equal(t, legacy, "1: "+tt.line+"\n")
+		})
+	}
+}
+
+func TestEncodedSourceResultLimits(t *testing.T) {
+	tools := &Toolset{Head: &Snapshot{Files: map[string]string{"file": strings.Repeat("\t", 8000) + "value"}}}
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "read_file", input: `{"path":"file","start_line":1,"end_line":1}`},
+		{name: "search_code", input: `{"query":"value"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := tools.Call(context.Background(), tt.name, json.RawMessage(tt.input))
+			assert.NilError(t, err)
+			assert.Assert(t, len(output) < 16000)
+			assert.Assert(t, strings.Contains(output, "[Result truncated"))
+			assert.Assert(t, !strings.Contains(output, "source_json="), "do not emit partial JSON strings")
+		})
+	}
 }
 
 func TestCombinedSnapshotLimits(t *testing.T) {

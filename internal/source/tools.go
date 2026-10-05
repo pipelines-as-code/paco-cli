@@ -57,8 +57,19 @@ func decodeInput(data json.RawMessage, target any) error {
 }
 
 func (s *Snapshot) Call(ctx context.Context, name string, input json.RawMessage) (string, error) {
+	return s.call(ctx, name, input, false)
+}
+
+func (s *Snapshot) call(ctx context.Context, name string, input json.RawMessage, quoteLines bool) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	sourceText := func(line string) string {
+		if !quoteLines {
+			return line
+		}
+		encoded, _ := json.Marshal(line)
+		return "source_json=" + string(encoded)
 	}
 	switch name {
 	case "read_file":
@@ -83,7 +94,7 @@ func (s *Snapshot) Call(ctx context.Context, name string, input json.RawMessage)
 		}
 		var output strings.Builder
 		for n := args.Start; n <= args.End && n <= len(lines); n++ {
-			line := fmt.Sprintf("%d: %s\n", n, lines[n-1])
+			line := fmt.Sprintf("%d: %s\n", n, sourceText(lines[n-1]))
 			if output.Len()+len(line) > maxResultBytes {
 				output.WriteString("[Result truncated; request a narrower line range.]\n")
 				break
@@ -144,7 +155,7 @@ func (s *Snapshot) Call(ctx context.Context, name string, input json.RawMessage)
 				continue
 			}
 			for n, line := range strings.Split(s.Files[filename], "\n") {
-				if strings.Contains(line, query) && !add(fmt.Sprintf("%s:%d: %s\n", filename, n+1, line)) {
+				if strings.Contains(line, query) && !add(fmt.Sprintf("%s:%d: %s\n", filename, n+1, sourceText(line))) {
 					return output.String(), nil
 				}
 			}

@@ -13,6 +13,10 @@ reason, not internal reasoning. Accepted findings require exact source quotes
 and a changed-line reference in the finding's file, even if the discovery
 already supplied them. Evidence uses revision "head" or "before", inclusive
 1-based line ranges (at most 200 lines), and exact quotes without line prefixes.
+Numbered diff lines and file/search results use source_json JSON strings;
+read_diff uses JSON content fields. Decode these values to obtain source.
+Preserve every space and tab, including indentation and trailing whitespace.
+Do not format code or normalize quotes. Join decoded lines with a newline.
 Return an empty evidence array when no usable reference exists.
 
 Reject semantic duplicates and set duplicate_of to the ID of their accepted

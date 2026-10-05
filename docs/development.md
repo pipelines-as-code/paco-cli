@@ -19,61 +19,62 @@ pre-commit install
 
 | Target | Description |
 |---|---|
-| `make help` | List all targets |
 | `make build` | Build `bin/paco` |
 | `make test` | Run tests with race detection |
-| `make test-no-cache` | Run tests without cache |
-| `make lint` | Run all linters |
+| `make lint` | Run golangci-lint and the gofumpt check |
 | `make fumpt` | Format Go files |
-| `make coverage` | Generate coverage profile |
-| `make html-coverage` | Open coverage report |
-| `make vendor` | Update vendor directory |
-| `make check` | Run lint + test (CI entry point) |
-| `make all` | Build, test, lint |
-| `make clean` | Remove build artifacts |
+| `make vendor` | Tidy and vendor dependencies |
+| `make check` | Lint and test (CI entry point) |
+
+`make help` lists the rest.
 
 ## Testing
 
-Tests use `gotest.tools/v3/assert` and follow PAC conventions:
+Tests use `gotest.tools/v3/assert` (not testify), are table-driven
+(`tests := []struct{...}`), and have PascalCase names without
+underscores.
 
-- Table-driven tests with `tests := []struct{...}{...}`
-- PascalCase test function names, no underscores
-- Descriptive `name` field for `t.Run` subtests
+Tests never hit the network. `internal/ghclient/ghtest` is a fake GitHub
+API that records requests; model tests inject a fake HTTP transport.
 
-GitHub and Claude are tested against `httptest` servers. Use
-`internal/ghclient/ghtest` for a fake GitHub API that records every
-request; model tests inject a fake HTTP transport. No network access
-required.
+## Rules
+
+- GitHub calls go through `internal/ghclient`, model calls through
+  `internal/model`.
+- No subprocesses (`os/exec`).
+- Repository tools only read the validated snapshot in `internal/source`.
+- Run `make vendor` after changing dependencies and commit `vendor/`
+  with `go.sum`.
+- Changes to redaction, scanning, trust filtering, prompts, or the API
+  clients need owner review.
 
 ## Code Layout
 
 ```
-cmd/paco/main.go           # entry point
-internal/cli/root.go        # cobra root, subcommand registration
-internal/diff/              # paco diff: fetch, parse, feedback
-internal/review/            # paco review: prompt, extract, normalize
-internal/post/              # paco post: sticky, labels, inline review
-internal/ghclient/            # GitHub API client (REST and GraphQL)
-internal/ghclient/ghtest/     # fake GitHub API for tests
-internal/model/              # Claude client (Vertex AI or Anthropic API)
-internal/source/             # bounded PR snapshots and read-only tools
-internal/httpsafe/           # redirect and origin checks
-internal/toolchain/          # base-branch language version detection
-internal/artifact/           # workspace file helpers
-internal/security/           # redaction and secret scanning
+cmd/paco/             entry point
+internal/cli/         cobra root command
+internal/diff/        paco diff: fetch, parse, feedback
+internal/review/      paco review: prompt, extract, normalize
+internal/post/        paco post: summary comment, labels, inline review
+internal/ghclient/    GitHub client (REST and GraphQL), ghtest/ fake
+internal/model/       Claude client (Vertex AI or Anthropic API)
+internal/source/      PR-head snapshot and read-only tools
+internal/httpsafe/    redirect and origin checks
+internal/toolchain/   base-branch language version detection
+internal/artifact/    workspace files
+internal/security/    redaction and secret scanning
 ```
 
 ## Releasing
 
-Releases use [GoReleaser](https://goreleaser.com/). Tag a version
-and push:
+Pushing a tag builds a release with [GoReleaser](https://goreleaser.com/):
 
 ```shell
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Snapshot build (local validation):
+Local snapshot build:
 
 ```shell
 goreleaser build --snapshot --clean

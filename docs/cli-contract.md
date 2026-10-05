@@ -2,7 +2,7 @@
 
 ## `paco diff`
 
-Fetches the PR diff and existing feedback, writes artifacts for downstream steps.
+Fetches the PR diff and existing feedback and writes artifacts for the next steps.
 
 ### Inputs
 
@@ -15,14 +15,14 @@ Fetches the PR diff and existing feedback, writes artifacts for downstream steps
 
 ### Environment
 
-- `GH_TOKEN`, else `GITHUB_TOKEN` — GitHub token
-- `GITHUB_API_URL` — REST API base URL for GitHub Enterprise; the
+- `GH_TOKEN`, else `GITHUB_TOKEN`: GitHub token
+- `GITHUB_API_URL`: REST API base URL for GitHub Enterprise. The
   GraphQL endpoint is derived from it (`/api/graphql` on the same host)
-  unless `GITHUB_GRAPHQL_URL` is set
-- `GH_HOST` — GitHub Enterprise hostname, used when `GITHUB_API_URL`
-  is unset (REST at `https://<host>/api/v3/`, GraphQL at
-  `https://<host>/api/graphql`; for GHE.com `<tenant>.ghe.com` hosts,
-  REST at `https://api.<host>/` and GraphQL at `https://api.<host>/graphql`)
+  unless `GITHUB_GRAPHQL_URL` is set.
+- `GH_HOST`: GitHub Enterprise hostname, used when `GITHUB_API_URL`
+  is unset. REST is at `https://<host>/api/v3/` and GraphQL at
+  `https://<host>/api/graphql`. For GHE.com (`<tenant>.ghe.com`), REST
+  is at `https://api.<host>/` and GraphQL at `https://api.<host>/graphql`.
 
 All GitHub URLs must use `https`.
 
@@ -33,8 +33,8 @@ A missing token or invalid URL is reported as a skip (`.paco-error`).
 | File | Description |
 |---|---|
 | `.pr.diff` | Redacted PR diff |
-| `.valid-lines.json` | Map of `file → {line: true}` for added lines |
-| `.existing-inline.json` | Map of `file → {line: true}` for lines with existing trusted comments |
+| `.valid-lines.json` | `{file: {line: true}}` for added lines |
+| `.existing-inline.json` | `{file: {line: true}}` for lines with existing trusted comments |
 | `.existing-feedback.txt` | Compact digest of existing feedback (max 30KB) |
 | `.head_sha` | HEAD commit SHA |
 | `.paco-error` | Skip reason (written on early exit) |
@@ -42,9 +42,9 @@ A missing token or invalid URL is reported as a skip (`.paco-error`).
 | `.toolchain-versions` | Language versions declared on the base branch (if any), one `language<TAB>version<TAB>source` line each |
 | `.paco-source.json` | Redacted text-file snapshot pinned to `.head_sha`, for read-only exploration |
 
-The source snapshot is optional. If collection fails or exceeds its limits,
-`diff` logs a warning and leaves it absent. It removes any previous snapshot
-before processing the PR so later steps cannot reuse stale source.
+The source snapshot is optional. If collection fails or hits a limit,
+`diff` logs a warning and writes none. Any snapshot from an earlier run
+is deleted first.
 
 ### Toolchain Detection
 
@@ -77,7 +77,7 @@ APIs are invalid.
 
 ## `paco review`
 
-Runs the LLM review and produces normalized findings.
+Runs the model review and writes normalized findings.
 
 ### Inputs
 
@@ -86,26 +86,14 @@ Runs the LLM review and produces normalized findings.
 | `--workspace` | no | Workspace directory (default `.`) |
 | `--model` | no | Claude model id, sent as is. Empty means `claude-opus-4-6@default` on Vertex AI and `claude-opus-4-6` on the Anthropic API |
 | `--reasoning-effort` | no | `low`, `medium`, `high`, `xhigh`, or `max`. Empty means `low`; `none` omits the API effort parameter. Values are trimmed and lowercased |
-| `--no-structured-output` | no | Omit the response schema (default `true`); still request JSON and apply parsing, normalization, and secret scanning |
+| `--no-structured-output` | no | Omit the API response schema (default `true`) |
 | `--no-exploration` | no | Disable repository tools (default `false`) |
-| `--web-search` | no | Enable basic public-documentation web search (default `true`); disable with `--web-search=false` |
+| `--web-search` | no | Allow web search for public library docs (default `true`) |
 
-The effort is sent as the Messages API `output_config.effort`. Which
-values a model supports is model-specific (for example, Opus 4.6
-accepts `max` but not `xhigh`); an unsupported value surfaces as a
-normal backend failure.
-
-By default, the prompt requests review JSON without an API-enforced schema,
-allowing web search. Use `--web-search=false --no-structured-output=false`
-to send the `.paco-review.json` schema instead. Extended thinking is disabled.
-The response is streamed and only accepted when it
-completes normally; a token-limit stop, a refusal, a truncated stream,
-or the 900 second timeout produce a failure summary. The deadline includes
-Vertex token acquisition; each OAuth request also has a 30-second timeout.
-
-For models without effort support, such as Haiku 4.5, use
-`--reasoning-effort none`. To make a plain-text model request instead of
-using the structured-output feature, keep the default output settings:
+The effort is sent as `output_config.effort`. Supported values depend
+on the model (Opus 4.6 accepts `max` but not `xhigh`); an unsupported
+value fails like any other backend error. Use `--reasoning-effort none`
+for models without effort support, such as Haiku 4.5:
 
 ```shell
 paco review --workspace /workspace/source \
@@ -113,63 +101,64 @@ paco review --workspace /workspace/source \
   --reasoning-effort none
 ```
 
-The prompt still asks for the same JSON object, but the API no longer
-guarantees its shape. Unparseable responses produce failure artifacts.
-Paco never retries a rejected schema request without the schema automatically.
+The prompt always asks for the review JSON. By default the API does not
+enforce a schema, because web search is incompatible with it. Pass
+`--web-search=false --no-structured-output=false` to send the schema.
+Either way, Paco parses, normalizes, and secret-scans the output, and
+unparseable output produces failure artifacts.
+
+The response is streamed with extended thinking disabled. A token-limit
+stop, refusal, truncated stream, or the 900-second timeout produces a
+failure summary. The timeout includes Vertex token acquisition, and each
+OAuth request has its own 30-second timeout. Paco never retries
+automatically.
 
 ### Repository Exploration
 
-When `.paco-source.json` is available, `review` exposes `list_files`,
-`read_file`, and `search_code` to Claude. Reads use 1-based line ranges;
-searches use literal, case-sensitive strings and optional path substrings.
-The snapshot must match `.head_sha`. A corrupt or mismatched snapshot
-fails the review; an absent snapshot produces a logged diff-only review.
-The review step does not need a GitHub token.
+When `.paco-source.json` is present and matches `.head_sha`, `review`
+exposes `list_files`, `read_file`, and `search_code` to Claude. Reads
+take 1-based line ranges. Searches are literal and case-sensitive, with
+an optional path substring filter. A corrupt or mismatched snapshot
+fails the review; a missing one falls back to a diff-only review.
 
-`diff` downloads a tarball at the PR head SHA and keeps regular UTF-8 text
-files in the JSON snapshot. It never extracts archive paths onto disk.
-Symlinks, hardlinks, binary files, files over 512 KiB, common credential
-files, and dependency directories such as `vendor` and `node_modules`
-are excluded. Tool results report the excluded-file count.
+`diff` builds the snapshot from a tarball of the PR head, keeping
+regular UTF-8 text files in memory without extracting them to disk. It
+skips symlinks, hardlinks, binary files, files over 512 KiB, common
+credential files, and dependency directories such as `vendor` and
+`node_modules`.
 
 Limits:
 
 - 32 MiB downloaded archive, 128 MiB expanded archive.
 - 16 MiB source text, 10,000 retained files, 32 MiB encoded snapshot.
 - 200 lines per read, 100 search/list results, under 16,000 bytes per tool result.
-- 24 repository tool calls, 3 web searches, 8 model turns, within the
-  existing 900-second review deadline.
+- 24 repository tool calls, 3 web searches, 8 model turns.
 
-Results that reach a size or match limit say they were truncated.
-Exhausting the model-turn or tool-call budget produces a failure artifact
-rather than publishing an unfinished review.
+Truncated tool results say so. Running out of turns or tool calls
+produces a failure artifact.
 
-Web search is enabled by default using `web_search_20250305` with direct calls only.
-Disable it with `--web-search=false`.
-No code-execution tool or dynamic filtering is enabled. Search queries
-go to the provider's search service and may incur additional charges.
-Claude is instructed to prefer official documentation for the declared
-library version and cite source URLs when a finding relies on web evidence.
-Provider restrictions and search errors are surfaced as review failures;
-Paco does not silently retry without search.
+Web search uses the provider's `web_search_20250305` tool, which may
+cost extra. Claude is told to search only public package names and
+versions and to cite URLs for findings that rely on web results. Search
+errors fail the review.
 
 ### Environment
 
 The backend is picked from the environment:
 
-1. `ANTHROPIC_API_KEY` set — the Anthropic API at
+1. `ANTHROPIC_API_KEY` set: the Anthropic API at
    `https://api.anthropic.com`. Other `ANTHROPIC_*` variables, such as
    `ANTHROPIC_BASE_URL`, are ignored.
-2. Otherwise `GOOGLE_APPLICATION_CREDENTIALS` — Vertex AI with the
+2. Otherwise `GOOGLE_APPLICATION_CREDENTIALS`: Vertex AI with the
    service account JSON at that path.
-   - `GOOGLE_CLOUD_PROJECT` — Vertex AI project ID (falls back to
+   - `GOOGLE_CLOUD_PROJECT`: Vertex AI project ID (falls back to
      `project_id` in the credentials file)
-   - `VERTEX_LOCATION` — Vertex AI location (default `global`)
-3. Neither set — the run fails with a failure summary.
+   - `VERTEX_LOCATION`: Vertex AI location (default `global`)
+3. Neither set: the run fails with a failure summary.
 
 Other variables:
 
-- `TRIGGER_COMMENT` — trigger comment text (determines review/summary mode)
+- `TRIGGER_COMMENT`: trigger comment text. `/paco summary` selects summary mode.
 
 ### Artifacts Read
 
@@ -189,7 +178,7 @@ Other variables:
 
 | Code | Meaning |
 |---|---|
-| 0 | Success (including fail/withhold paths — check markers) |
+| 0 | Success, including the fail and withhold paths (check the marker files) |
 | non-zero | Fatal error |
 
 ---
@@ -208,19 +197,10 @@ Posts the review results to GitHub.
 
 ### Environment
 
-- `GH_TOKEN`, else `GITHUB_TOKEN` — GitHub token
-- `GITHUB_API_URL` — REST API base URL for GitHub Enterprise; the
-  GraphQL endpoint is derived from it (`/api/graphql` on the same host)
-  unless `GITHUB_GRAPHQL_URL` is set
-- `GH_HOST` — GitHub Enterprise hostname, used when `GITHUB_API_URL`
-  is unset (REST at `https://<host>/api/v3/`, GraphQL at
-  `https://<host>/api/graphql`; for GHE.com `<tenant>.ghe.com` hosts,
-  REST at `https://api.<host>/` and GraphQL at `https://api.<host>/graphql`)
+Same as [`paco diff`](#environment).
 
-All GitHub URLs must use `https`.
-
-The resolved token is also used as a literal in the belt-and-braces
-secret rescan. A missing token or invalid URL is a fatal error.
+`post` also rescans the review for its own token. A missing token or
+invalid URL is a fatal error.
 
 ### Artifacts Read
 

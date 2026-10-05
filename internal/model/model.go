@@ -32,11 +32,17 @@ const (
 
 	cloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform"
 	tokenTimeout       = 30 * time.Second
+
+	// Limits of the tool loop in Complete. The review system prompt states them.
+	maxTurns           = 8
+	maxToolCalls       = 24
+	maxWebSearches     = 3
+	maxToolResultBytes = 16000
 )
 
 var validRegion = regexp.MustCompile(`^[a-z0-9-]+$`)
 
-// Request is a single non-agentic completion.
+// Request is one review completion, optionally with tools.
 type Request struct {
 	System    string
 	Prompt    string
@@ -62,8 +68,7 @@ type Toolset interface {
 
 // Result is the text of a completed response.
 type Result struct {
-	Text       string
-	StopReason string
+	Text string
 }
 
 // Client completes a request.
@@ -262,12 +267,12 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 	}
 	clientTools := params.Tools
 	toolCalls, searches := 0, 0
-	for range 8 {
+	for range maxTurns {
 		params.Tools = append([]anthropic.ToolUnionParam(nil), clientTools...)
-		if req.WebSearch && searches < 3 {
+		if req.WebSearch && searches < maxWebSearches {
 			params.Tools = append(params.Tools, anthropic.ToolUnionParam{
 				OfWebSearchTool20250305: &anthropic.WebSearchTool20250305Param{
-					MaxUses: anthropic.Int(int64(3 - searches)),
+					MaxUses: anthropic.Int(int64(maxWebSearches - searches)),
 				},
 			})
 		}
@@ -283,7 +288,7 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 					return Result{}, &IncompleteError{Reason: "unexpected server tool"}
 				}
 				searches++
-				if searches > 3 {
+				if searches > maxWebSearches {
 					return Result{}, &IncompleteError{Reason: "web search limit reached"}
 				}
 				fmt.Println("Model tool: web_search")
@@ -304,7 +309,7 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 					return Result{}, &IncompleteError{Reason: "tool request without tool_use stop reason"}
 				}
 				toolCalls++
-				if toolCalls > 24 {
+				if toolCalls > maxToolCalls {
 					return Result{}, &IncompleteError{Reason: "repository tool call limit reached"}
 				}
 				if !allowed[block.Name] {
@@ -318,8 +323,8 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 				if callErr != nil {
 					output = callErr.Error()
 				}
-				if len(output) > 16000 {
-					return Result{}, &IncompleteError{Reason: "repository tool result exceeded 16000 bytes"}
+				if len(output) > maxToolResultBytes {
+					return Result{}, &IncompleteError{Reason: fmt.Sprintf("repository tool result exceeded %d bytes", maxToolResultBytes)}
 				}
 				results = append(results, anthropic.NewToolResultBlock(block.ID, output, callErr != nil))
 			}
@@ -342,7 +347,7 @@ func (c *client) Complete(ctx context.Context, req Request) (Result, error) {
 					text.WriteString(block.Text)
 				}
 			}
-			return Result{Text: text.String(), StopReason: string(msg.StopReason)}, nil
+			return Result{Text: text.String()}, nil
 		case anthropic.StopReasonMaxTokens:
 			return Result{}, &IncompleteError{Reason: "output token limit reached"}
 		case anthropic.StopReasonRefusal:

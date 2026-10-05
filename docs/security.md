@@ -2,41 +2,33 @@
 
 ## Trust Boundaries
 
-- **Diff content** is untrusted: PRs can contain anything, including
-  prompt injection attempts and leaked credentials. The diff is redacted
-  before it reaches the model.
+The PR diff is untrusted. It can contain prompt injection and leaked
+credentials, so Paco redacts it before the model sees it.
 
-- **Existing feedback** is filtered by write access. Only comments from
-  users with `write`, `admin`, or `maintain` permission are included.
-  Resolved threads and dismissed reviews are excluded.
+Existing feedback only includes comments from users with `write`,
+`admin`, or `maintain` permission. Resolved threads and dismissed
+reviews are dropped.
 
-- **Review rules** (`.tekton/ai/REVIEW.md`) are loaded from the base
-  branch only, never from the PR head. A PR cannot weaken its own
-  review rules.
+Review rules (`.tekton/ai/REVIEW.md`) and toolchain versions come from
+the base branch only, so a PR cannot change them. Both `diff` and
+`review` drop toolchain entries that do not match a known detector or
+that look like credentials. `diff` deletes these files from earlier
+runs before fetching the current base branch.
 
-- **Toolchain versions** (`.toolchain-versions`) come from version files
-  on the base branch only, such as `go.mod` or `.python-version`. Both
-  `paco diff` and `paco review` drop any entry whose language, source
-  file, or version string does not match the known detectors. Values
-  matching credential patterns are also dropped. Optional artifacts
-  from earlier runs are removed before fetching the current base branch.
+Model output is untrusted and is secret-scanned before any GitHub write.
 
-- **Model output** is untrusted. It passes through secret scanning
-  before any GitHub write.
-
-Repository snapshots and web results are also untrusted. Tools cannot
-execute source code, run tests, or read arbitrary workspace files.
-The model receives source only through bounded reads of a snapshot
-whose commit matches the reviewed diff. Archive entries are held in a
-map rather than extracted; links and unsafe paths are rejected or excluded.
-Credential patterns and the active GitHub token are redacted during
-collection, and model credential literals are redacted when loading
-the snapshot.
+The source snapshot and web results are untrusted too. The model reads
+source only through bounded reads of a snapshot whose commit matches
+the reviewed diff; it cannot run code, run tests, or read other
+workspace files. Archive entries stay in memory, and links and unsafe
+paths are skipped or rejected. The snapshot is redacted for credential
+patterns and the GitHub token when collected, and for model credentials
+when loaded.
 
 ## Redaction
 
 Credential-shaped strings are redacted before writing the diff to the
-workspace and before logging any output. Patterns:
+workspace and before logging. Patterns:
 
 - GitHub tokens: `ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_` prefixed
 - GitHub PATs: `github_pat_` prefixed
@@ -55,10 +47,9 @@ pattern is found:
 2. The post step sees the block and posts a withhold notice
 3. No inline comments are posted
 
-The review step also scans for its active model credentials (the
+The review step also checks for its own model credential (the
 Anthropic API key or the service-account email). The post step
-rescans independently using its own GitHub token as an extra literal
-match (belt-and-braces).
+rescans the review and also checks for its own GitHub token.
 
 ## External Services
 
@@ -82,19 +73,15 @@ Paco runs no subprocesses. It calls two HTTPS APIs directly:
     rules apply.
   - Only read-only snapshot tools and basic web search are exposed.
     Shells, code execution, dynamic filtering, and extended thinking are
-    disabled. The model is asked to return review JSON. The API enforces its schema
-    unless `--no-structured-output` is passed; local parsing,
-    normalization, and secret scanning remain enabled in either mode.
-- Errors from both services are scrubbed of the active credentials,
-  redacted, and truncated before logging.
+    disabled.
 
-Web search is enabled by default. Model-generated queries leave the review
-context for the provider's search service. The system prompt
-prohibits source snippets, credentials, private identifiers, and internal
-URLs in queries. This instruction is not a deterministic data-loss
-prevention filter; set `--web-search=false` for repositories that cannot
-permit that risk. Web pages and repository files cannot grant additional
-tool permissions.
+The review step scrubs known model credentials and credential patterns
+from diagnostic output and truncates it to 4,000 bytes.
+
+Web search is on by default, and its queries go to the provider's
+search service. The system prompt forbids source snippets, credentials,
+private identifiers, and internal URLs in queries, but nothing enforces
+that. Use `--web-search=false` if that risk is not acceptable.
 
 ## Output Limits
 

@@ -161,7 +161,6 @@ func TestCompleteAnthropicRequest(t *testing.T) {
 	})
 	assert.NilError(t, err)
 	assert.Equal(t, res.Text, `{"summary":"ok"}`)
-	assert.Equal(t, res.StopReason, "end_turn")
 
 	assert.Equal(t, len(ft.reqs), 1)
 	got := ft.reqs[0]

@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
 )
-
-type inlineComment = ghclient.ThreadComment
 
 // feedbackSource is the subset of the GitHub client the feedback digest needs.
 type feedbackSource interface {
@@ -47,7 +46,7 @@ func fetchExistingFeedback(ctx context.Context, gh feedbackSource, repo ghclient
 	return existingJSON, buildFeedbackDigest(comments, reviews, issueComments, permMap), nil
 }
 
-func collectLogins(comments []inlineComment, reviews []ghclient.Review, issueComments []ghclient.IssueComment) []string {
+func collectLogins(comments []ghclient.ThreadComment, reviews []ghclient.Review, issueComments []ghclient.IssueComment) []string {
 	seen := map[string]bool{}
 	var logins []string
 	add := func(login string) {
@@ -84,25 +83,16 @@ func isTrusted(perm string) bool {
 	return perm == "write" || perm == "admin" || perm == "maintain"
 }
 
-func buildExistingInlineMap(comments []inlineComment, permMap map[string]string) map[string]map[string]bool {
+func buildExistingInlineMap(comments []ghclient.ThreadComment, permMap map[string]string) map[string]map[string]bool {
 	result := map[string]map[string]bool{}
 	for _, c := range comments {
-		if c.Path == "" || c.Line == 0 {
-			continue
-		}
-		if c.Resolved {
-			continue
-		}
-		if c.ReviewState == "DISMISSED" {
-			continue
-		}
-		if !isTrusted(permMap[c.Login]) {
+		if c.Path == "" || c.Line == 0 || c.Resolved || c.ReviewState == "DISMISSED" || !isTrusted(permMap[c.Login]) {
 			continue
 		}
 		if result[c.Path] == nil {
 			result[c.Path] = map[string]bool{}
 		}
-		result[c.Path][fmt.Sprintf("%d", c.Line)] = true
+		result[c.Path][strconv.Itoa(c.Line)] = true
 	}
 	return result
 }
@@ -116,27 +106,12 @@ func digestBody(body string) string {
 	return body
 }
 
-func loginOrUnknown(login string) string {
-	if login == "" {
-		return "unknown"
-	}
-	return login
-}
-
-func buildFeedbackDigest(comments []inlineComment, reviews []ghclient.Review, issueComments []ghclient.IssueComment, permMap map[string]string) string {
+func buildFeedbackDigest(comments []ghclient.ThreadComment, reviews []ghclient.Review, issueComments []ghclient.IssueComment, permMap map[string]string) string {
 	var lines []string
 
 	for _, c := range comments {
-		if c.Body == "" || c.Path == "" {
-			continue
-		}
-		if strings.Contains(c.Body, "<!-- paco-review -->") {
-			continue
-		}
-		if c.Resolved || c.ReviewState == "DISMISSED" {
-			continue
-		}
-		if !isTrusted(permMap[c.Login]) {
+		if c.Body == "" || c.Path == "" || strings.Contains(c.Body, "<!-- paco-review -->") ||
+			c.Resolved || c.ReviewState == "DISMISSED" || !isTrusted(permMap[c.Login]) {
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("- %s on %s:%d: %s", c.Login, c.Path, c.Line, digestBody(c.Body)))
@@ -149,25 +124,17 @@ func buildFeedbackDigest(comments []inlineComment, reviews []ghclient.Review, is
 		if strings.HasPrefix(r.Body, "## Paco Review") || strings.HasPrefix(r.Body, "Paco inline comments") {
 			continue
 		}
-		if r.State == "DISMISSED" {
+		if r.State == "DISMISSED" || !isTrusted(permMap[r.Login]) {
 			continue
 		}
-		login := loginOrUnknown(r.Login)
-		if !isTrusted(permMap[login]) {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("- review by %s: %s", login, digestBody(r.Body)))
+		lines = append(lines, fmt.Sprintf("- review by %s: %s", r.Login, digestBody(r.Body)))
 	}
 
 	for _, c := range issueComments {
-		if c.Body == "" || strings.Contains(c.Body, "<!-- paco-review -->") {
+		if c.Body == "" || strings.Contains(c.Body, "<!-- paco-review -->") || !isTrusted(permMap[c.Login]) {
 			continue
 		}
-		login := loginOrUnknown(c.Login)
-		if !isTrusted(permMap[login]) {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("- comment by %s: %s", login, digestBody(c.Body)))
+		lines = append(lines, fmt.Sprintf("- comment by %s: %s", c.Login, digestBody(c.Body)))
 	}
 
 	return strings.Join(lines, "\n")

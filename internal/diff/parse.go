@@ -2,7 +2,6 @@ package diff
 
 import (
 	"bufio"
-	"encoding/json"
 	"io"
 	"strconv"
 	"strings"
@@ -66,8 +65,4 @@ func parseHunkStart(line string) int {
 		return 0
 	}
 	return n - 1
-}
-
-func ValidLinesToJSON(validLines map[string]map[string]bool) ([]byte, error) {
-	return json.Marshal(validLines)
 }

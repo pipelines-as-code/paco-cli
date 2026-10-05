@@ -17,7 +17,7 @@ func TestBuildExistingInlineMap(t *testing.T) {
 		"maintainer": "maintain",
 	}
 
-	comments := []inlineComment{
+	comments := []ghclient.ThreadComment{
 		{Login: "trusted", Path: "a.go", Line: 10, Resolved: false, ReviewState: "COMMENTED"},
 		{Login: "outsider", Path: "b.go", Line: 20, Resolved: false, ReviewState: "COMMENTED"},
 		{Login: "trusted", Path: "c.go", Line: 30, Resolved: true, ReviewState: "COMMENTED"},
@@ -42,7 +42,7 @@ func TestBuildFeedbackDigest(t *testing.T) {
 		"outsider": "read",
 	}
 
-	comments := []inlineComment{
+	comments := []ghclient.ThreadComment{
 		{Login: "trusted", Path: "a.go", Line: 10, Body: "good point", Resolved: false, ReviewState: "COMMENTED"},
 		{Login: "outsider", Path: "b.go", Line: 20, Body: "my opinion", Resolved: false, ReviewState: "COMMENTED"},
 		{Login: "trusted", Path: "c.go", Line: 30, Body: "<!-- paco-review -->summary", Resolved: false, ReviewState: "COMMENTED"},
@@ -75,7 +75,7 @@ func TestIsTrusted(t *testing.T) {
 }
 
 func TestCollectLogins(t *testing.T) {
-	comments := []inlineComment{
+	comments := []ghclient.ThreadComment{
 		{Login: "alice"},
 		{Login: "bob"},
 		{Login: "alice"},
@@ -90,7 +90,7 @@ func TestCollectLogins(t *testing.T) {
 func TestBuildFeedbackDigestGolden(t *testing.T) {
 	permMap := map[string]string{"alice": "write", "bob": "admin", "eve": "read"}
 	long := strings.Repeat("x", 450)
-	comments := []inlineComment{
+	comments := []ghclient.ThreadComment{
 		{Login: "alice", Path: "a.go", Line: 3, Body: "line one\r\nline two", ReviewState: "COMMENTED"},
 		{Login: "alice", Path: "b.go", Line: 4, Body: "resolved", Resolved: true, ReviewState: "COMMENTED"},
 		{Login: "alice", Path: "c.go", Line: 5, Body: "dismissed", ReviewState: "DISMISSED"},

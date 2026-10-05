@@ -24,7 +24,9 @@ type Comment struct {
 	Body     string `json:"body"`
 }
 
-func ExtractReview(text string) (*Review, error) {
+// ExtractReview returns the last JSON object in text that decodes as a Review
+// with a comments array, or nil.
+func ExtractReview(text string) *Review {
 	var lastReview *Review
 
 	for start := 0; start < len(text); start++ {
@@ -56,13 +58,10 @@ func ExtractReview(text string) (*Review, error) {
 			} else if ch == '}' {
 				depth--
 				if depth == 0 {
-					candidate := text[start : end+1]
 					var r Review
-					if err := json.Unmarshal([]byte(candidate), &r); err == nil {
-						if r.Comments != nil {
-							lastReview = &r
-							start = end
-						}
+					if json.Unmarshal([]byte(text[start:end+1]), &r) == nil && r.Comments != nil {
+						lastReview = &r
+						start = end
 					}
 					break
 				}
@@ -70,10 +69,7 @@ func ExtractReview(text string) (*Review, error) {
 		}
 	}
 
-	if lastReview == nil {
-		return nil, nil
-	}
-	return lastReview, nil
+	return lastReview
 }
 
 const maxComments = 30
@@ -86,16 +82,6 @@ var validSeverities = map[string]bool{
 }
 
 func Normalize(r *Review) *Review {
-	rating := r.ReviewScore.Rating
-	if rating < 1 {
-		rating = 1
-	}
-	if rating > 5 {
-		rating = 5
-	}
-
-	reason := r.ReviewScore.Reason
-
 	var comments []Comment
 	for _, c := range r.Comments {
 		if c.Path == "" || c.Line == 0 || c.Body == "" {
@@ -115,8 +101,8 @@ func Normalize(r *Review) *Review {
 	return &Review{
 		Summary: r.Summary,
 		ReviewScore: ReviewScore{
-			Rating: rating,
-			Reason: reason,
+			Rating: min(max(r.ReviewScore.Rating, 1), 5),
+			Reason: r.ReviewScore.Reason,
 		},
 		SecuritySensitive: r.SecuritySensitive,
 		Comments:          comments,

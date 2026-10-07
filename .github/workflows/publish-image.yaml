@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - paco-next
     tags:
       - "v*"
 
@@ -48,9 +49,12 @@ jobs:
           if [[ "$REF_TYPE" == "tag" ]]; then
             tags="$REF_NAME,sha-$REVISION"
             export PACO_VERSION="$REF_NAME"
-          else
+          elif [[ "$REF_NAME" == "main" ]]; then
             tags="latest,sha-$REVISION"
             export PACO_VERSION="main-$REVISION"
+          else
+            tags="$REF_NAME,sha-$REVISION"
+            export PACO_VERSION="$REF_NAME-$REVISION"
           fi
           ko build --bare --tags "$tags" \
             --image-label "org.opencontainers.image.source=$SOURCE_URL" \

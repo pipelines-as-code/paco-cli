@@ -278,13 +278,20 @@ goreleaser build --snapshot --clean
 
 `.github/workflows/publish-image.yaml` uses [ko](https://ko.build/) to
 publish `ghcr.io/pipelines-as-code/paco-cli` for Linux amd64 and arm64.
-It runs on pushes to `main` and `v*` tags, independently of binary releases.
-It does not build or publish images for pull requests.
+It runs on pushes to `main`, `paco-next` and `v*` tags, independently of
+binary releases. Other branches and pull requests do not build images, so
+push to `paco-next` when you want an image to test.
 
 | Push | Image tags |
 |---|---|
 | `main` | `latest`, `sha-<full-commit>` |
+| `paco-next` | `paco-next`, `sha-<full-commit>` |
 | `v*` tag | Matching tag, `sha-<full-commit>` |
+
+Each push to `paco-next` moves its tag. To test it in a cluster, set the
+PipelineRun `image` parameter to `paco-next`, and point the
+`pipelinesascode.tekton.dev/pipeline` URL at the `paco-next` branch if
+the Pipeline changed too.
 
 Release pushes do not change `latest`. The examples track main through
 `latest`; use their `image` parameter to choose a release tag or digest.

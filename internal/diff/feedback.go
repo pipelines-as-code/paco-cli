@@ -30,11 +30,13 @@ func fetchExistingFeedback(ctx context.Context, gh feedbackSource, repo ghclient
 		comments = nil
 	}
 	reviews, err := gh.Reviews(ctx, repo, pr)
+	reviewsAvailable := err == nil
 	if err != nil {
 		fmt.Printf("Warning: could not fetch reviews: %s\n", security.Scrub(err.Error(), secrets...))
 		reviews = nil
 	}
 	issueComments, err := gh.IssueComments(ctx, repo, pr)
+	issueCommentsAvailable := err == nil
 	if err != nil {
 		fmt.Printf("Warning: could not fetch issue comments: %s\n", security.Scrub(err.Error(), secrets...))
 		issueComments = nil
@@ -48,7 +50,7 @@ func fetchExistingFeedback(ctx context.Context, gh feedbackSource, repo ghclient
 	}
 	if !threadsAvailable {
 		structured.Status = "unavailable"
-	} else if !permissionsComplete {
+	} else if !reviewsAvailable || !issueCommentsAvailable || !permissionsComplete {
 		structured.Status = "partial"
 	}
 

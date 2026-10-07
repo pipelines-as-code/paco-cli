@@ -94,3 +94,16 @@ func TestScoreRequiresAdjudication(t *testing.T) {
 	_, err = Score(report, missing)
 	assert.ErrorContains(t, err, "summary accuracy")
 }
+
+func TestScoreRejectsUnknownSummaryRunWithoutFindings(t *testing.T) {
+	yes := true
+	judgments := Judgments{Summaries: []SummaryJudgment{{RunID: "real", Accurate: &yes}}}
+	report := Report{Version: 1, Runs: []Run{{ID: "real"}}}
+	_, err := Score(report, judgments)
+	assert.NilError(t, err)
+	judgments.Summaries = append(judgments.Summaries, SummaryJudgment{RunID: "missing", Accurate: &yes})
+	_, err = Score(report, judgments)
+	assert.ErrorContains(t, err, "summary judgment references an unknown run")
+	_, err = Score(Report{Version: 1}, judgments)
+	assert.ErrorContains(t, err, "summary judgment references an unknown run")
+}

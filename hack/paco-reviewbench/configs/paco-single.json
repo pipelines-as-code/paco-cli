@@ -1,0 +1,43 @@
+{
+  "name": "paco-single",
+  "display_name": "Paco (single)",
+  "provider": "Pipelines-as-Code",
+  "image": "ghcr.io/pipelines-as-code/paco-reviewbench@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "configuration": [
+    {
+      "key": "model",
+      "value": "claude-opus-4-6@default",
+      "display_value": "Claude Opus 4.6"
+    },
+    {
+      "key": "effort",
+      "value": "low",
+      "display_value": "Low"
+    },
+    {
+      "key": "strategy",
+      "value": "single",
+      "display_value": "Single pass"
+    }
+  ],
+  "secrets": {
+    "env": [
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "GOOGLE_CLOUD_PROJECT",
+      "VERTEX_LOCATION"
+    ],
+    "files": [
+      "/var/run/secrets/vertex/credentials.json"
+    ]
+  },
+  "egress": [
+    "aiplatform.googleapis.com",
+    "oauth2.googleapis.com"
+  ],
+  "pr_timeout_seconds": 900,
+  "contact": "pipelines-as-code@example.com",
+  "contacts": [
+    "chmouel"
+  ],
+  "notes": "Example only. Replace the image digest and contact before submitting. GOOGLE_APPLICATION_CREDENTIALS must point at the credentials file; add <region>-aiplatform.googleapis.com to egress when VERTEX_LOCATION is not global."
+}

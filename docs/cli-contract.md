@@ -183,8 +183,14 @@ as incomplete coverage. Failed tool reads and truncated results also mark the
 run partial. Budget exhaustion, malformed verifier output, provider errors,
 or invalid verifier citations withhold all findings.
 
+Plain-output responses may wrap the final object in one terminal `json` code
+fence, optionally preceded by commentary without object or array delimiters.
+Multiple fences, competing objects and trailing commentary are rejected.
+The extracted object still has to pass every schema and evidence check.
+
 `.paco-status.json` records versioned provenance, usage, limitations, candidate
-outcomes and publication counts. Verified `.paco-review.json` output can include
+outcomes, publication counts and a scrubbed `failure_reason` when verification
+fails. Verified `.paco-review.json` output can include
 `summary_findings` for deletion-side findings without an added-line anchor.
 Raw model transcripts are not persisted. Review output, mode, failure,
 security-block and status artifacts are cleared before each review attempt.

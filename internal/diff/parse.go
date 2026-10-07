@@ -162,6 +162,27 @@ func Parse(text string) (*ParsedDiff, error) {
 	return result, nil
 }
 
+// Limitations lists coverage gaps in parsed that reviewers should report:
+// one note for binary changes and one per file with an incomplete hunk.
+func Limitations(parsed *ParsedDiff) []string {
+	var notes []string
+	for _, file := range parsed.Files {
+		if file.Binary {
+			notes = append(notes, "Binary file changes have no text hunk context.")
+			break
+		}
+	}
+	for _, file := range parsed.Files {
+		for _, hunk := range file.Hunks {
+			if !hunk.Complete {
+				notes = append(notes, "A diff hunk is incomplete.")
+				break
+			}
+		}
+	}
+	return notes
+}
+
 func ParseValidLines(r io.Reader) (map[string]map[string]bool, error) {
 	data, err := io.ReadAll(io.LimitReader(r, maxDiffBytes+1))
 	if err != nil {

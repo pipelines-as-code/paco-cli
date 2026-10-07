@@ -200,7 +200,8 @@ func buildEvidenceContext(parsed *source.Diff, head, before *source.Snapshot) (e
 func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, backend *model.Resolved, effort string) error {
 	status := &VerificationStatus{Version: 1, State: "failed", Limitations: []string{}, Decisions: []Disposition{}}
 	fail := func(cause error) error {
-		fmt.Printf("Verified review failed: %s\n", scrubber(backend.Secrets)(cause.Error()))
+		status.FailureReason = scrubber(backend.Secrets)(cause.Error())
+		fmt.Printf("Verified review failed: %s\n", status.FailureReason)
 		output := Review{Verified: status.HeadSHA != "", Summary: "Paco could not complete verification. No findings were published.", Comments: []Comment{}}
 		data, err := json.Marshal(output)
 		if err != nil {

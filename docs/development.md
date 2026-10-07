@@ -25,6 +25,7 @@ pre-commit install
 | `make fumpt` | Format Go files |
 | `make vendor` | Tidy and vendor dependencies |
 | `make check` | Lint and test (CI entry point) |
+| `make reviewbench-image` | Build the ReviewBench adapter image locally |
 
 `make help` lists the rest.
 
@@ -66,6 +67,8 @@ internal/toolchain/   base-branch language version detection
 internal/artifact/    workspace files
 internal/security/    redaction and secret scanning
 internal/eval/        opt-in quality evaluation and human-adjudicated scoring
+internal/reviewbench/ ReviewBench adapter
+hack/paco-reviewbench/ ReviewBench adapter image and configs (not released)
 ```
 
 ## Review evaluations
@@ -156,6 +159,99 @@ most 5% of negative-case runs, and recall within five percentage points of
 single-pass review. Report counts and variability alongside percentages.
 These are targets, not measured results or approval to change the default.
 
+### ReviewBench
+
+[ReviewBench](https://github.com/review-bench/ReviewBench) scores code
+reviewers on real pull requests against a multi-source golden set. Unlike
+`paco-eval`, it uses whole repositories and an LLM judge. `hack/paco-reviewbench`
+runs one paco review under its
+[agent contract](https://github.com/review-bench/ReviewBench/blob/main/AGENT_CONTRACT.md).
+It reads the mounted checkout and `diff.patch` instead of calling GitHub, then
+writes `findings.json`.
+
+The adapter differs from a production review in a few ways. It rebuilds
+the before snapshot by reverse-applying the diff to the head checkout. It
+does not load `.tekton/ai/REVIEW.md` or toolchain files. It anchors verified
+findings on deleted lines to the nearest new-side line in the same hunk.
+A failed review exits non-zero so ReviewBench retries it. A skipped or
+security-blocked review writes no findings.
+
+Settings come from the manifest's configuration labels:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RB_CONFIG_MODEL` | backend default | Model name |
+| `RB_CONFIG_EFFORT` | `low` | Reasoning effort |
+| `RB_CONFIG_STRATEGY` | `single` | `single` or `verified` (`--verify-findings`) |
+| `RB_CONFIG_WEB_SEARCH` | `true` | Server-side web search |
+| `RB_CONFIG_EXPLORATION` | `true` | Repository exploration tools |
+| `RB_CONFIG_TIMEOUT` | `780` | Review timeout in seconds, below the 900s per-PR limit |
+
+ReviewBench runs are ad hoc: a maintainer starts them by hand when
+comparing models or strategies. CI never builds the adapter image or runs
+it against the corpus, and the image is not published. CI does run the
+`internal/reviewbench` unit tests, which use a fake model and need no
+credentials.
+
+Build the image and check its output format against the public test set
+with a ReviewBench checkout. Each run spends model tokens.
+
+```shell
+make reviewbench-image
+cd ../ReviewBench
+scripts/try-agent.sh ko.local/paco-reviewbench:dev --pr 0 \
+  -e GOOGLE_CLOUD_PROJECT -e VERTEX_LOCATION=global \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/var/run/secrets/vertex/credentials.json \
+  -e RB_CONFIG_STRATEGY=verified
+```
+
+`try-agent.sh` checks only the findings format, and it forwards
+environment variables but mounts no credential files. Before running the
+example above with Vertex AI, resolve the credentials path from the directory
+it is relative to and check that it is a readable file:
+
+```shell
+export VERTEX_CREDS="$(realpath -e "$GOOGLE_APPLICATION_CREDENTIALS")"
+test -f "$VERTEX_CREDS" && test -r "$VERTEX_CREDS"
+```
+
+Stop if either check fails. Add
+`--mount "type=bind,source=$VERTEX_CREDS,target=/var/run/secrets/vertex/credentials.json,readonly"`
+to the `docker run` in a local copy of the script. Unlike `-v`, this fails
+when the source is missing rather than creating a directory. Alternatively,
+use `-e ANTHROPIC_API_KEY`. Scoring needs the ReviewBench judge.
+`hack/paco-reviewbench/configs/` has manifests for both strategies.
+
+For diagnostics, pass `-e RB_DIAGNOSTICS=/work/out/diagnostics.json`.
+This writes a separate, scrubbed JSON file containing the review summary,
+outcome, context limitations, effective model request settings, prompt digest,
+elapsed time and budget counters. Verified runs also include the available
+verification counts, dispositions and failure reason. Counts measure actual requests and tool
+calls, not which files were read; tokens are provider-reported. A security
+block withholds the summary and verification details. Diagnostic write errors
+fail the run explicitly.
+
+Diagnostics are off by default. They never retain the temporary workspace,
+source snapshots, prompts, raw responses or tool results. Treat summaries as
+repository-derived data even after credential redaction. The sidecar is
+host-readable, like findings, so keep the parent output directory private.
+Use a separate output directory per configuration and copy the sidecar and
+logs before the harness replaces its per-PR output on another run.
+Do not use the same path for `RB_OUT` and `RB_DIAGNOSTICS`.
+
+To investigate response-format failures, explicitly set
+`RB_CAPTURE_RESPONSES=/work/out/responses.json` alongside `RB_DIAGNOSTICS`.
+This separate, temporary capture contains final completion text only, with
+credential redaction; responses matching the secret scanner are withheld
+entirely. It contains no prompts or tool results. Keep its parent directory
+private, delete captures after diagnosis, and never commit them. Capture
+write failures fail the run. Use a different path from findings and diagnostics.
+
+When comparing settings, keep the checkout, model and prompt version fixed.
+Compare source-supported findings and false positives, not just finding counts.
+A format pass is not a quality score, and one PR cannot establish a better
+default. Live comparisons remain ad hoc and spend model tokens; CI uses fakes.
+
 ## Releasing
 
 Pushing a tag builds a binary release through the existing Tekton pipeline
@@ -191,9 +287,9 @@ separate registry secret. After the first publication, a maintainer must
 make the package public if it starts private. Verify an anonymous pull
 before using the examples in another cluster.
 
-`.ko.yaml` builds only `cmd/paco`, uses vendored dependencies, and pins
-the static base image by digest. Update that digest when refreshing the
-base image. `PACO_VERSION` overrides the version embedded in the binary;
+`.ko.yaml` builds `cmd/paco` and the ReviewBench adapter, uses vendored
+dependencies, and pins the base images by digest. The workflow publishes
+only `cmd/paco`. Update the digests when refreshing the base images. `PACO_VERSION` overrides the version embedded in the binary;
 local builds default to `dev-<short-commit>`. The commit and date fields
 identify the source commit.
 

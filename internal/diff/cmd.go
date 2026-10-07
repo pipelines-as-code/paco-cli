@@ -222,20 +222,7 @@ func Run(ctx context.Context, opts Options) error {
 			return err
 		}
 	}
-	for _, file := range parsed.Files {
-		if file.Binary {
-			manifest.Limitations = append(manifest.Limitations, "Binary file changes have no text hunk context.")
-			break
-		}
-	}
-	for _, file := range parsed.Files {
-		for _, hunk := range file.Hunks {
-			if !hunk.Complete {
-				manifest.Limitations = append(manifest.Limitations, "A diff hunk is incomplete.")
-				break
-			}
-		}
-	}
+	manifest.Limitations = append(manifest.Limitations, Limitations(parsed)...)
 	if len(manifest.Limitations) > 0 {
 		manifest.ContextStatus = "partial"
 	}

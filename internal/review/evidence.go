@@ -121,6 +121,7 @@ func decodeStrict(text string, target any) error {
 
 func parseDiscovery(text string) (discovery, error) {
 	var d discovery
+	text = responseObject(text)
 	if err := validateShape(text, discoverySchema()); err != nil {
 		return d, err
 	}
@@ -142,11 +143,26 @@ func parseDiscovery(text string) (discovery, error) {
 	return d, nil
 }
 
+// Plain-output models sometimes wrap their final object after commentary.
+// Accept only one terminal JSON fence, never choose among competing objects.
+func responseObject(text string) string {
+	text = strings.TrimSpace(text)
+	start := strings.Index(text, "```json\n")
+	if start < 0 || strings.Count(text, "```") != 2 ||
+		!strings.HasSuffix(text, "\n```") || strings.ContainsAny(text[:start], "{}[]") ||
+		start+len("```json\n") > len(text)-len("\n```") {
+		return text
+	}
+	return strings.TrimSpace(text[start+len("```json\n") : len(text)-len("\n```")])
+}
+
 func parseVerdict(text string, candidates []Candidate, context evidenceContext) (verdict, error) {
 	var v verdict
+	text = responseObject(text)
 	if err := validateShape(text, verdictSchema()); err != nil {
 		return v, err
 	}
+
 	if err := decodeStrict(text, &v); err != nil {
 		return v, err
 	}

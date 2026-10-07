@@ -51,6 +51,8 @@ type Options struct {
 	VerifyFindings     bool
 	// Budget allows an evaluation run to impose token limits without changing CLI defaults.
 	Budget *model.Budget
+	// Timeout overrides the review deadline; zero keeps the 900-second default.
+	Timeout time.Duration
 	// Resolve builds the model client; nil resolves it from the environment.
 	Resolve func(ctx context.Context) (*model.Resolved, error)
 }
@@ -146,7 +148,11 @@ func Run(ctx context.Context, opts Options) error {
 		return writeFail("No reviewable changes found in this diff.")
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, reviewTimeout)
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = reviewTimeout
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	resolve := opts.Resolve
@@ -248,7 +254,7 @@ func Run(ctx context.Context, opts Options) error {
 		case errors.As(err, &incomplete):
 			return writeFail("Paco: " + incomplete.Error() + ".")
 		case errors.Is(err, context.DeadlineExceeded):
-			return writeFail(fmt.Sprintf("Paco: the model review timed out after %ds.", int(reviewTimeout.Seconds())))
+			return writeFail(fmt.Sprintf("Paco: the model review timed out after %ds.", int(timeout.Seconds())))
 		default:
 			return writeFail("Paco: the model backend returned an error; check the PipelineRun logs.")
 		}

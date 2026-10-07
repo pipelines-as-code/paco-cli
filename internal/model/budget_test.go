@@ -80,8 +80,9 @@ func TestCompleteDiscoveryReservation(t *testing.T) {
 		used      Limits
 		remaining Limits
 	}{
-		{name: "turns", tools: 1, want: "model turn limit", used: Limits{4, 4, 0}, remaining: Limits{4, 20, 3}},
-		{name: "repository calls", tools: 13, want: "repository tool call limit", used: Limits{1, 12, 0}, remaining: Limits{7, 12, 3}},
+		// The last turn, or the one after the call allowance runs out, has no tools.
+		{name: "turns", tools: 1, want: "model turn limit", used: Limits{4, 3, 0}, remaining: Limits{4, 21, 3}},
+		{name: "repository calls", tools: 13, want: "repository tool call limit", used: Limits{2, 12, 0}, remaining: Limits{6, 12, 3}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -161,13 +162,13 @@ func TestCompleteProviderSearchAccounting(t *testing.T) {
 				req.Limits = &Limits{1, 24, 3}
 			}
 			_, err := anthropicClient(t, ft).Complete(context.Background(), req)
+			// A single turn is the final turn, so no repository call runs.
 			if tt.want == "" {
 				assert.ErrorContains(t, err, "model turn limit")
-				assert.Equal(t, tools.calls, 1)
 			} else {
 				assert.ErrorContains(t, err, tt.want)
-				assert.Equal(t, tools.calls, 0)
 			}
+			assert.Equal(t, tools.calls, 0)
 			assert.Equal(t, budget.Snapshot().Used.WebSearches, tt.used)
 			assert.Equal(t, budget.Snapshot().Remaining.WebSearches, max(int64(0), 3-tt.used))
 		})
@@ -407,8 +408,8 @@ func TestCompleteFailedRepositoryCallsConsumeBudget(t *testing.T) {
 		req.Limits = nil
 	}
 	assert.Equal(t, tools.calls, 24)
-	assert.DeepEqual(t, budget.Snapshot().Used, Limits{2, 24, 0})
-	assert.DeepEqual(t, budget.Snapshot().Remaining, Limits{6, 0, 3})
+	assert.DeepEqual(t, budget.Snapshot().Used, Limits{4, 24, 0})
+	assert.DeepEqual(t, budget.Snapshot().Remaining, Limits{4, 0, 3})
 }
 
 func TestCompleteExplicitZeroLimits(t *testing.T) {

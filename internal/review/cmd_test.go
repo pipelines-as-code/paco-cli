@@ -297,6 +297,19 @@ func TestRunModelOutput(t *testing.T) {
 	}
 }
 
+func TestRunGuardsSuggestions(t *testing.T) {
+	ws := setupWorkspaceWithDiff(t, suggestionDiff)
+	output, err := json.Marshal(Review{Summary: "ok", Comments: []Comment{
+		{Path: "a.go", Line: 2, Severity: "high", Body: "Same line.\n\n```suggestion\n\tv := x.Value\n```"},
+		{Path: "a.go", Line: 2, Severity: "high", Body: "Guard.\n\n```suggestion\n\tif x == nil {\n```"},
+	}})
+	assert.NilError(t, err)
+	assert.NilError(t, Run(context.Background(), Options{Workspace: ws, Resolve: fakeResolve(&fakeClient{text: string(output)})}))
+	review := readReview(t, ws)
+	assert.Equal(t, review.Comments[0].Body, "Same line.")
+	assert.Equal(t, review.Comments[1].Body, "Guard.\n\n```suggestion\n\tif x == nil {\n```")
+}
+
 func TestRunModelFailure(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -80,7 +80,7 @@ func TestCompleteToolFailures(t *testing.T) {
 	}{
 		{name: "unknown tool", stream: toolEvents("bash"), want: "unexpected repository tool"},
 		{name: "incomplete tool stream", stream: strings.TrimSuffix(toolEvents("read_file"), "event: message_stop\ndata: "+evStop+"\n\n"), want: "message_stop"},
-		{name: "turn limit", stream: toolEvents("read_file"), want: "turn limit", calls: 8},
+		{name: "turn limit", stream: toolEvents("read_file"), want: "turn limit", calls: 7},
 		{name: "empty tool turn", stream: sse(evStart, evMessageDelta("tool_use"), evStop), want: "without tool requests"},
 	}
 	for _, tt := range tests {
@@ -92,6 +92,81 @@ func TestCompleteToolFailures(t *testing.T) {
 			_, err := anthropicClient(t, ft).Complete(context.Background(), Request{Prompt: "p", Model: "m", MaxTokens: 100, Tools: tools})
 			assert.ErrorContains(t, err, tt.want)
 			assert.Equal(t, tools.calls, tt.calls)
+		})
+	}
+}
+
+func TestCompleteFinalTurnAnswers(t *testing.T) {
+	tests := []struct {
+		name   string
+		limits *Limits
+		tools  int
+		calls  int
+		reqs   int
+	}{
+		{name: "turn limit", tools: 1, calls: 7, reqs: 8},
+		{name: "repository call limit", limits: &Limits{Turns: 8, ToolCalls: 3, WebSearches: 0}, tools: 2, calls: 3, reqs: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tools := &testTools{}
+			ft := &fakeTransport{}
+			ft.respond = func(*http.Request) *http.Response {
+				ft.mu.Lock()
+				_, final := ft.reqs[len(ft.reqs)-1].Body["tool_choice"]
+				ft.mu.Unlock()
+				if final {
+					return response(200, "text/event-stream", sse(evStart, evBlockStart, evDelta, evBlockStop, evMessageDelta("end_turn"), evStop))
+				}
+				return response(200, "text/event-stream", budgetEvents(tt.tools, 0, 0, "tool_use"))
+			}
+			result, err := anthropicClient(t, ft).Complete(context.Background(), Request{
+				Prompt: "p", Model: "m", MaxTokens: 100, Tools: tools, WebSearch: true, Limits: tt.limits,
+			})
+			assert.NilError(t, err)
+			assert.Equal(t, result.Text, `{"summary":"ok"}`)
+			assert.Equal(t, tools.calls, tt.calls)
+			assert.Equal(t, len(ft.reqs), tt.reqs)
+			for _, req := range ft.reqs[:len(ft.reqs)-1] {
+				_, hasChoice := req.Body["tool_choice"]
+				assert.Assert(t, !hasChoice)
+			}
+			final := ft.reqs[len(ft.reqs)-1].Body
+			assert.DeepEqual(t, final["tool_choice"], map[string]any{"type": "none"})
+			finalTools := final["tools"].([]any)
+			assert.Equal(t, len(finalTools), 1, "the final turn drops web search")
+			assert.Equal(t, finalTools[0].(map[string]any)["name"], "read_file")
+			messages := final["messages"].([]any)
+			content := messages[len(messages)-1].(map[string]any)["content"].([]any)
+			last := content[len(content)-1].(map[string]any)
+			assert.Equal(t, last["type"], "text")
+			assert.Equal(t, last["text"], finalInstruction)
+			if tt.limits != nil {
+				limited := content[len(content)-2].(map[string]any)
+				assert.Equal(t, limited["is_error"], true)
+			}
+		})
+	}
+}
+
+func TestCompleteFinalTurnToolRequestFails(t *testing.T) {
+	tests := []struct {
+		name   string
+		limits *Limits
+		want   string
+	}{
+		{name: "turn limit", want: "model turn limit"},
+		{name: "repository call limit", limits: &Limits{Turns: 8, ToolCalls: 1, WebSearches: 0}, want: "repository tool call limit"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ft := &fakeTransport{respond: func(*http.Request) *http.Response {
+				return response(200, "text/event-stream", budgetEvents(2, 0, 0, "tool_use"))
+			}}
+			_, err := anthropicClient(t, ft).Complete(context.Background(), Request{
+				Prompt: "p", Model: "m", MaxTokens: 100, Tools: &testTools{}, Limits: tt.limits,
+			})
+			assert.ErrorContains(t, err, tt.want)
 		})
 	}
 }

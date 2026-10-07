@@ -312,7 +312,8 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		if limits != nil {
 			allowance = *limits
 		}
-		phaseLimits := fmt.Sprintf("\nThis phase has at most %d model turns, %d repository calls and %d web searches. Finish within those limits.",
+		phaseLimits := fmt.Sprintf("\nThis phase has at most %d model turns, %d repository calls and %d web searches. "+
+			"The last turn has no tools and must contain the final answer. Finish within those limits.",
 			allowance.Turns, allowance.ToolCalls, allowance.WebSearches)
 		var availableTools model.Toolset = tools
 		if opts.NoExploration {

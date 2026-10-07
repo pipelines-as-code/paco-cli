@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path"
 	"strings"
 	"unicode/utf8"
@@ -24,6 +25,7 @@ const (
 	maxSourceBytes   = 16 << 20
 	maxFileBytes     = 512 << 10
 	maxFiles         = 10000
+	maxEntries       = 100000
 )
 
 type Snapshot struct {
@@ -45,8 +47,7 @@ func FromArchive(data []byte, commit string, secrets ...string) (*Snapshot, erro
 	defer func() { _ = gz.Close() }()
 	limited := &io.LimitedReader{R: gz, N: maxExpandedBytes + 1}
 	reader := tar.NewReader(limited)
-	s := &Snapshot{Commit: commit, Files: map[string]string{}}
-	total := 0
+	c := &collector{s: &Snapshot{Commit: commit, Files: map[string]string{}}, secrets: secrets}
 	for entries := 0; ; entries++ {
 		header, err := reader.Next()
 		if limited.N <= 0 {
@@ -58,7 +59,7 @@ func FromArchive(data []byte, commit string, secrets ...string) (*Snapshot, erro
 		if err != nil {
 			return nil, fmt.Errorf("reading source archive: %w", err)
 		}
-		if entries >= 100000 {
+		if entries >= maxEntries {
 			return nil, errors.New("source archive has too many entries")
 		}
 		if !fs.ValidPath(strings.TrimSuffix(header.Name, "/")) || strings.Contains(header.Name, "\\") {
@@ -71,33 +72,94 @@ func FromArchive(data []byte, commit string, secrets ...string) (*Snapshot, erro
 		if !ok || !safePath(name) {
 			return nil, errors.New("source archive contains an invalid file path")
 		}
-		if header.Typeflag != tar.TypeReg || excludedPath(name) || header.Size > maxFileBytes || security.ScanSecrets(name, secrets...) != "" {
-			s.Excluded++
-			continue
+		read := func() ([]byte, error) { return io.ReadAll(io.LimitReader(reader, maxFileBytes+1)) }
+		if err := c.add(name, header.Typeflag == tar.TypeReg, header.Size, read); err != nil {
+			return nil, err
 		}
-		content, err := io.ReadAll(io.LimitReader(reader, maxFileBytes+1))
-		if err != nil {
-			return nil, fmt.Errorf("reading source file: %w", err)
-		}
-		if len(content) > maxFileBytes || !utf8.Valid(content) || bytes.ContainsRune(content, 0) {
-			s.Excluded++
-			continue
-		}
-		if _, exists := s.Files[name]; exists {
-			return nil, errors.New("source archive contains duplicate paths")
-		}
-		text := security.Scrub(string(content), secrets...)
-		if len(text) > maxFileBytes {
-			s.Excluded++
-			continue
-		}
-		total += len(text)
-		if total > maxSourceBytes || len(s.Files) >= maxFiles {
-			return nil, errors.New("source snapshot exceeds 16 MiB or 10000 files")
-		}
-		s.Files[name] = text
 	}
-	return s, nil
+	return c.s, nil
+}
+
+// FromDir reads a checked-out working tree with the same filters and limits
+// as FromArchive. Symlinks are never followed and .git directories are skipped.
+func FromDir(dir, commit string, secrets ...string) (*Snapshot, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, fmt.Errorf("opening source directory: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	c := &collector{s: &Snapshot{Commit: commit, Files: map[string]string{}}, secrets: secrets}
+	entries := 0
+	err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if strings.EqualFold(entry.Name(), ".git") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if entries++; entries > maxEntries {
+			return errors.New("source directory has too many entries")
+		}
+		if !safePath(name) {
+			c.s.Excluded++
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		return c.add(name, entry.Type().IsRegular(), info.Size(), func() ([]byte, error) {
+			file, err := root.Open(name)
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = file.Close() }()
+			return io.ReadAll(io.LimitReader(file, maxFileBytes+1))
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading source directory: %w", err)
+	}
+	return c.s, nil
+}
+
+type collector struct {
+	s       *Snapshot
+	secrets []string
+	total   int
+}
+
+// add keeps one regular UTF-8 text file, counting skipped files as excluded.
+func (c *collector) add(name string, regular bool, size int64, read func() ([]byte, error)) error {
+	if !regular || excludedPath(name) || size > maxFileBytes || security.ScanSecrets(name, c.secrets...) != "" {
+		c.s.Excluded++
+		return nil
+	}
+	content, err := read()
+	if err != nil {
+		return fmt.Errorf("reading source file: %w", err)
+	}
+	if len(content) > maxFileBytes || !utf8.Valid(content) || bytes.ContainsRune(content, 0) {
+		c.s.Excluded++
+		return nil
+	}
+	if _, exists := c.s.Files[name]; exists {
+		return errors.New("source archive contains duplicate paths")
+	}
+	text := security.Scrub(string(content), c.secrets...)
+	if len(text) > maxFileBytes {
+		c.s.Excluded++
+		return nil
+	}
+	c.total += len(text)
+	if c.total > maxSourceBytes || len(c.s.Files) >= maxFiles {
+		return errors.New("source snapshot exceeds 16 MiB or 10000 files")
+	}
+	c.s.Files[name] = text
+	return nil
 }
 
 func Decode(data []byte, commit string, secrets ...string) (*Snapshot, error) {

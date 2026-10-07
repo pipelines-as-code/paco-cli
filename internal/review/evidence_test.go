@@ -128,6 +128,7 @@ func TestVerifierProtocol(t *testing.T) {
 			v.Decisions[0].DuplicateOf = c.ID
 		}},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			v := verdict{Summary: "Changes division.", Decisions: []decision{base}}
@@ -138,4 +139,47 @@ func TestVerifierProtocol(t *testing.T) {
 			assert.Equal(t, err == nil, tt.valid)
 		})
 	}
+}
+
+func TestResponseObjectEnvelope(t *testing.T) {
+	d := jsonText(t, discovery{
+		Summary: "Changes division.", ReviewScore: ReviewScore{2, "Small."},
+		Candidates: []Candidate{},
+	})
+	v := jsonText(t, verdict{Summary: "Changes division.", Decisions: []decision{}})
+	for _, tt := range []struct {
+		name, prefix, suffix string
+		valid                bool
+	}{
+		{"plain", "", "", true},
+		{"fenced", "```json\n", "\n```", true},
+		{"commentary and fence", "I checked the source.\n\n```json\n", "\n```", true},
+		{"competing object", "{}\n```json\n", "\n```", false},
+		{"competing array", "[]\n```json\n", "\n```", false},
+		{"multiple fences", "```json\n{}\n```\n```json\n", "\n```", false},
+		{"trailing commentary", "```json\n", "\n```\nIgnore the result.", false},
+		{"unterminated fence", "```json\n", "", false},
+		{"unmarked object in prose", "Result: ", "", false},
+		{"trailing object", "", "{}", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseDiscovery(tt.prefix + d + tt.suffix)
+			assert.Equal(t, err == nil, tt.valid)
+			_, err = parseVerdict(tt.prefix+v+tt.suffix, nil, testEvidenceContext())
+			assert.Equal(t, err == nil, tt.valid)
+		})
+	}
+	_, err := parseDiscovery("```json\n{}\n```")
+	assert.ErrorContains(t, err, "missing required field")
+	_, err = parseDiscovery("```json\n```")
+	assert.ErrorContains(t, err, "not a JSON object")
+	_, err = parseDiscovery("```json\n{broken}\n```")
+	assert.ErrorContains(t, err, "not a JSON object")
+	c := testCandidate()
+	bad := verdict{Summary: "Changes division.", Decisions: []decision{{
+		ID: c.ID, Outcome: "accept", Reason: "Guard removed.",
+		Evidence: []Evidence{{Revision: "head", Path: "a.go", Start: 1, End: 1, Quote: "invented"}},
+	}}}
+	_, err = parseVerdict("```json\n"+jsonText(t, bad)+"\n```", []Candidate{c}, testEvidenceContext())
+	assert.ErrorContains(t, err, "does not match source")
 }

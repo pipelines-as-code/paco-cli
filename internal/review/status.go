@@ -19,6 +19,7 @@ const FileStatus = artifact.FileStatus
 type VerificationStatus struct {
 	Version       int           `json:"version"`
 	State         string        `json:"state"`
+	FailureReason string        `json:"failure_reason,omitempty"`
 	HeadSHA       string        `json:"head_sha"`
 	BaseRef       string        `json:"base_ref"`
 	TargetBaseSHA string        `json:"target_base_sha"`

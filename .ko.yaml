@@ -1,9 +1,13 @@
 defaultBaseImage: cgr.dev/chainguard/static@sha256:fe55470f22d3259488d9d3739168d8f04da67755f0b69382bc26eda4a7d3d327
+baseImageOverrides:
+  # ReviewBench mounts /work/out owned by the host user; the adapter runs as root to write it.
+  github.com/pipelines-as-code/paco-cli/hack/paco-reviewbench: gcr.io/distroless/static-debian12@sha256:d75cdd72874d4790092fcb1b058493ecf6bb5bf2b2b897045b00ff01d91843f2
 defaultPlatforms:
   - linux/amd64
   - linux/arm64
 builds:
-  - main: ./cmd/paco
+  - id: paco
+    main: ./cmd/paco
     env:
       - CGO_ENABLED=0
     flags:
@@ -15,3 +19,13 @@ builds:
       - -X main.version={{ if index .Env "PACO_VERSION" }}{{ index .Env "PACO_VERSION" }}{{ else }}dev-{{ .Git.ShortCommit }}{{ end }}
       - -X main.commit={{ .Git.FullCommit }}
       - -X main.date={{ .Git.CommitDate }}
+  - id: paco-reviewbench
+    main: ./hack/paco-reviewbench
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+      - -mod=vendor
+    ldflags:
+      - -s
+      - -w

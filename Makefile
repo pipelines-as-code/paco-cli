@@ -16,6 +16,10 @@ help: ## Show this help
 build: ## Build the paco binary
 	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/$(BINARY) ./cmd/paco
 
+.PHONY: reviewbench-image
+reviewbench-image: ## Build the ReviewBench adapter image into the local Docker daemon
+	ko build --local --base-import-paths --platform=linux/amd64 --tags=dev ./hack/paco-reviewbench
+
 .PHONY: test
 test: ## Run tests with race detection
 	$(GO) test $(GOFLAGS) -race -failfast ./...

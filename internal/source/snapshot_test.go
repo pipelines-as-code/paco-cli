@@ -6,9 +6,12 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/pipelines-as-code/paco-cli/internal/security"
 	"gotest.tools/v3/assert"
 )
 
@@ -86,6 +89,37 @@ func TestSnapshotRejectsUnsafeArchives(t *testing.T) {
 			_, err := FromArchive(archive(t, tt.files...), "sha")
 			assert.Assert(t, err != nil)
 		})
+	}
+}
+
+func TestSnapshotExcludesPrivateKeyContent(t *testing.T) {
+	key := "-----BEGIN RSA PRIVATE KEY-----\nsynthetic-key-body\n-----END RSA PRIVATE KEY-----\n"
+	serviceAccount, err := json.Marshal(map[string]string{"private_key": key})
+	assert.NilError(t, err)
+	files := map[string]string{"id_rsa": key, "gcp.json": string(serviceAccount)}
+	var entries []archiveFile
+	dir := t.TempDir()
+	for name, content := range files {
+		entries = append(entries, archiveFile{name: "root/" + name, content: content})
+		assert.NilError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+	}
+	archived, err := FromArchive(archive(t, entries...), "sha")
+	assert.NilError(t, err)
+	local, err := FromDir(dir, "sha")
+	assert.NilError(t, err)
+	for _, snapshot := range []*Snapshot{archived, local} {
+		assert.Equal(t, len(snapshot.Files), 0)
+		assert.Equal(t, snapshot.Excluded, len(files))
+		_, err := snapshot.Call(context.Background(), "read_file", json.RawMessage(`{"path":"id_rsa","start_line":1,"end_line":3}`))
+		assert.ErrorContains(t, err, "file is not available")
+	}
+	for name, content := range files {
+		for _, text := range []string{content, security.Scrub(content)} {
+			data, err := json.Marshal(&Snapshot{Commit: "sha", Files: map[string]string{name: text}})
+			assert.NilError(t, err)
+			_, err = Decode(data, "sha")
+			assert.ErrorContains(t, err, "invalid file")
+		}
 	}
 }
 

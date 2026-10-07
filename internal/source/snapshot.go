@@ -142,7 +142,7 @@ func (c *collector) add(name string, regular bool, size int64, read func() ([]by
 	if err != nil {
 		return fmt.Errorf("reading source file: %w", err)
 	}
-	if len(content) > maxFileBytes || !utf8.Valid(content) || bytes.ContainsRune(content, 0) {
+	if len(content) > maxFileBytes || !utf8.Valid(content) || bytes.ContainsRune(content, 0) || bytes.Contains(content, []byte("PRIVATE KEY-----")) {
 		c.s.Excluded++
 		return nil
 	}
@@ -179,7 +179,7 @@ func Decode(data []byte, commit string, secrets ...string) (*Snapshot, error) {
 	}
 	total := 0
 	for name, content := range s.Files {
-		if !safePath(name) || excludedPath(name) || security.ScanSecrets(name, secrets...) != "" || len(content) > maxFileBytes || !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
+		if !safePath(name) || excludedPath(name) || security.ScanSecrets(name, secrets...) != "" || len(content) > maxFileBytes || !utf8.ValidString(content) || strings.ContainsRune(content, 0) || strings.Contains(content, "PRIVATE KEY-----") {
 			return nil, errors.New("source snapshot contains an invalid file")
 		}
 		content = security.Scrub(content, secrets...)

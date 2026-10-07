@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -79,8 +80,10 @@ func TestTrustedFeedbackBounds(t *testing.T) {
 }
 
 func TestTrustedFeedbackReportsMissingCoverage(t *testing.T) {
-	tests := []struct{ name, graph, wantStatus string }{
+	tests := []struct{ name, graph, failedRoute, wantStatus string }{
 		{name: "missing threads", graph: `{"errors":[{"message":"unavailable"}]}`, wantStatus: "unavailable"},
+		{name: "missing reviews", failedRoute: "GET /repos/owner/repo/pulls/1/reviews", wantStatus: "partial"},
+		{name: "missing issue comments", failedRoute: "GET /repos/owner/repo/issues/1/comments", wantStatus: "partial"},
 		{
 			name: "permission lookup failed",
 			graph: `{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
@@ -93,7 +96,14 @@ func TestTrustedFeedbackReportsMissingCoverage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f, c := newFakeGitHub(t)
 			happyPath(f, simpleDiff)
-			f.json("POST /graphql", tt.graph)
+			if tt.graph != "" {
+				f.json("POST /graphql", tt.graph)
+			}
+			if tt.failedRoute != "" {
+				f.Handle(tt.failedRoute, func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusInternalServerError)
+				})
+			}
 			ws := &artifact.Workspace{Dir: t.TempDir()}
 			assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws.Dir, GitHub: c}))
 			data, err := ws.Read(artifact.FileExistingFeedbackJSON)

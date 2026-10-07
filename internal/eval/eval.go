@@ -301,10 +301,10 @@ func Score(report Report, judgments Judgments) (Metrics, error) {
 		if !seen[id] {
 			return m, errors.New("judgment references an unknown run")
 		}
-		for id := range summaries {
-			if !seen[id] {
-				return m, errors.New("summary judgment references an unknown run")
-			}
+	}
+	for id := range summaries {
+		if !seen[id] {
+			return m, errors.New("summary judgment references an unknown run")
 		}
 	}
 	if count := m.TruePositives + m.FalsePositives; count > 0 {

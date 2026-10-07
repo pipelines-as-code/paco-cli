@@ -253,6 +253,11 @@ Compare source-supported findings and false positives, not just finding counts.
 A format pass is not a quality score, and one PR cannot establish a better
 default. Live comparisons remain ad hoc and spend model tokens; CI uses fakes.
 
+The [local comparison report](benchmarks/reviewbench-report.md) records the 25-PR
+low/high-effort experiment, verified-mode failures, and proposed prompt
+experiments. After the judge repair, low effort led on recall and F1 in
+every paired view from one run per setting.
+
 ## Releasing
 
 Pushing a tag builds a binary release through the existing Tekton pipeline

@@ -128,7 +128,7 @@ spec:
               workingDir: $(workspaces.source.path)
               script: |
                 pip3 install codespell
-                codespell -d docs/ internal/ cmd/
+                codespell -d docs/ internal/ cmd/ hack/ tekton/
     workspaces:
       - name: source
   workspaces:

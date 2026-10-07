@@ -1,0 +1,110 @@
+# Paco AI code reviewer for Pipelines-as-Code.
+#
+# Copy this file to .tekton/paco.yaml in your repository, create a model
+# secret (see "Model credentials" below) and adjust the values marked
+# CHANGEME.
+#
+# The review steps live in the shared Pipeline at tekton/paco.pipeline.yaml in
+# github.com/pipelines-as-code/paco-cli. Pipelines-as-Code fetches it on
+# every run through the remote pipeline annotation below, so this file only
+# holds triggers and settings, and you pick up fixes without editing it.
+#
+# Triggers:
+#   - Automatically when a pull request targeting "main" is opened or
+#     reopened.
+#   - On demand with a "/paco review" or "/paco summary" PR comment.
+#
+# Model credentials (create one of these in the namespace of your
+# Repository CR):
+#
+#   Claude on Vertex AI, also set vertex_project below:
+#     kubectl create secret generic paco-vertex-credentials \
+#       --from-file=service-account.json=/path/to/service-account.json
+#
+#   Anthropic API:
+#     kubectl create secret generic paco-anthropic-api-key \
+#       --from-literal=api-key=sk-ant-...
+#
+# Paco uses the Anthropic API when that secret exists and Vertex AI
+# otherwise. The GitHub token comes from Pipelines-as-Code through
+# {{git_auth_secret}}; you do not need to create it.
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: paco
+  annotations:
+    # Shared Pipeline. "main" follows the latest version; replace it with a
+    # release tag or commit SHA to pin the review steps.
+    pipelinesascode.tekton.dev/pipeline: "https://raw.githubusercontent.com/pipelines-as-code/paco-cli/main/tekton/paco.pipeline.yaml"
+    pipelinesascode.tekton.dev/on-cel-expression: |
+      event == "pull_request" && target_branch == "main" && (body.action == "opened" || body.action == "reopened")
+    pipelinesascode.tekton.dev/on-comment: "^/paco[[:space:]]+(review|summary)[[:space:]]*$"
+    pipelinesascode.tekton.dev/max-keep-runs: "2"
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+spec:
+  pipelineRef:
+    name: paco
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        fsGroup: 65532
+  params:
+    # Filled in by Pipelines-as-Code; leave these as they are.
+    - name: repo_owner
+      value: "{{repo_owner}}"
+    - name: repo_name
+      value: "{{repo_name}}"
+    - name: pull_request_number
+      value: "{{pull_request_number}}"
+    - name: trigger_comment
+      value: |
+        {{ trigger_comment }}
+    # Lets paco add an "eyes" reaction to the triggering comment.
+    - name: comment_id
+      value: "{{ cel: has(body.comment) && has(body.comment.id) ? string(body.comment.id) : '' }}"
+    - name: git_auth_secret
+      value: "{{git_auth_secret}}"
+
+    # CHANGEME (Vertex AI only): Google Cloud project for Vertex AI.
+    - name: vertex_project
+      value: "my-gcp-project"
+
+    # Everything below is optional; the values shown are the defaults.
+    #
+    # Paco image. "latest" tracks main; use a release tag, "paco-next" for
+    # unreleased changes, or a digest to pin it.
+    # - name: image
+    #   value: "ghcr.io/pipelines-as-code/paco-cli:latest"
+    #
+    # Claude model id. Empty uses the backend default.
+    # - name: model
+    #   value: ""
+    #
+    # Reasoning effort: none (omit), low, medium, high, xhigh or max.
+    # Empty means low.
+    # - name: reasoning_effort
+    #   value: ""
+    #
+    # Search public library documentation while reviewing.
+    # - name: web_search
+    #   value: "true"
+    #
+    # Opt-in second pass that checks each finding before posting it.
+    # - name: verify_findings
+    #   value: "false"
+    #
+    # Secret names and keys, if yours differ from the commands above.
+    # - name: vertex_credentials_secret
+    #   value: "paco-vertex-credentials"
+    # - name: vertex_credentials_key
+    #   value: "service-account.json"
+    # - name: vertex_location
+    #   value: "global"
+    # - name: anthropic_secret
+    #   value: "paco-anthropic-api-key"
+    # - name: anthropic_secret_key
+    #   value: "api-key"
+  workspaces:
+    - name: source
+      emptyDir: {}

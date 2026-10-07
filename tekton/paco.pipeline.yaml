@@ -1,0 +1,137 @@
+# Paco AI code reviewer Pipeline.
+#
+# Reference it from a PipelineRun with the Pipelines-as-Code remote pipeline
+# annotation, see tekton/paco.pipelinerun.yaml:
+#
+#   pipelinesascode.tekton.dev/pipeline: "https://raw.githubusercontent.com/pipelines-as-code/paco-cli/main/tekton/paco.pipeline.yaml"
+#
+# Both model secrets are optional. Paco uses the Anthropic API when the
+# Anthropic secret exists and Claude on Vertex AI otherwise.
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: paco
+spec:
+  params:
+    - name: repo_owner
+    - name: repo_name
+    - name: pull_request_number
+    - name: trigger_comment
+      default: ""
+    - name: comment_id
+      default: ""
+    - name: git_auth_secret
+    - name: image
+      description: Paco image. Tracks main; use a release tag or digest to pin it.
+      default: "ghcr.io/pipelines-as-code/paco-cli:latest"
+    - name: model
+      description: Claude model id. Empty means the backend default.
+      default: ""
+    - name: reasoning_effort
+      description: One of none (omit), low, medium, high, xhigh, max. Empty means low.
+      default: ""
+    - name: no_structured_output
+      description: Plain JSON output permits web search without API-enforced schemas.
+      default: "true"
+    - name: web_search
+      default: "true"
+    - name: verify_findings
+      default: "false"
+    - name: anthropic_secret
+      description: Secret holding the Anthropic API key. Leave it absent to use Vertex AI.
+      default: "paco-anthropic-api-key"
+    - name: anthropic_secret_key
+      default: "api-key"
+    - name: vertex_credentials_secret
+      description: Secret holding the Vertex AI service-account JSON.
+      default: "paco-vertex-credentials"
+    - name: vertex_credentials_key
+      default: "service-account.json"
+    - name: vertex_project
+      default: ""
+    - name: vertex_location
+      default: "global"
+  workspaces:
+    - name: source
+  tasks:
+    - name: paco-review
+      workspaces:
+        - name: source
+          workspace: source
+      taskSpec:
+        workspaces:
+          - name: source
+        steps:
+          - name: compute-diff
+            displayName: "Fetch PR diff via paco"
+            image: "$(params.image)"
+            imagePullPolicy: Always
+            env:
+              - name: GH_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: "$(params.git_auth_secret)"
+                    key: "git-provider-token"
+            command: ["/ko-app/paco", "diff"]
+            args:
+              - "--repo=$(params.repo_owner)/$(params.repo_name)"
+              - "--pr=$(params.pull_request_number)"
+              - "--comment-id=$(params.comment_id)"
+              - "--workspace=$(workspaces.source.path)"
+
+          - name: paco-review
+            displayName: "Run Paco review"
+            image: "$(params.image)"
+            imagePullPolicy: Always
+            volumeMounts:
+              - name: vertex-credentials
+                mountPath: /var/run/secrets/paco-vertex
+                readOnly: true
+            env:
+              - name: ANTHROPIC_API_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: "$(params.anthropic_secret)"
+                    key: "$(params.anthropic_secret_key)"
+                    optional: true
+              - name: GOOGLE_APPLICATION_CREDENTIALS
+                value: /var/run/secrets/paco-vertex/credentials.json
+              - name: GOOGLE_CLOUD_PROJECT
+                value: "$(params.vertex_project)"
+              - name: VERTEX_LOCATION
+                value: "$(params.vertex_location)"
+              - name: TRIGGER_COMMENT
+                value: "$(params.trigger_comment)"
+            command: ["/ko-app/paco", "review"]
+            args:
+              - "--workspace=$(workspaces.source.path)"
+              - "--model=$(params.model)"
+              - "--reasoning-effort=$(params.reasoning_effort)"
+              - "--no-structured-output=$(params.no_structured_output)"
+              - "--web-search=$(params.web_search)"
+              - "--verify-findings=$(params.verify_findings)"
+
+          - name: post-review
+            displayName: "Post review to the pull request"
+            image: "$(params.image)"
+            imagePullPolicy: Always
+            env:
+              - name: GH_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: "$(params.git_auth_secret)"
+                    key: "git-provider-token"
+            command: ["/ko-app/paco", "post"]
+            args:
+              - "--repo=$(params.repo_owner)/$(params.repo_name)"
+              - "--pr=$(params.pull_request_number)"
+              - "--workspace=$(workspaces.source.path)"
+        volumes:
+          - name: vertex-credentials
+            secret:
+              secretName: "$(params.vertex_credentials_secret)"
+              optional: true
+              items:
+                - key: "$(params.vertex_credentials_key)"
+                  path: credentials.json

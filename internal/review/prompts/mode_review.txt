@@ -31,6 +31,18 @@ Prioritize findings in this order:
 Consider testing gaps only when they represent a concrete
 regression risk in the changed behavior.
 
+When repository tools are available, check before reporting:
+- A missing guard, null check, validation or error conversion:
+  read the called implementation and the relevant caller, and
+  name a concrete input that fails. If the implementation
+  already handles it, drop the finding. If you cannot read
+  that code, do not report it.
+- A changed test: confirm it calls the production code it
+  claims to cover, not a mock or stub of that code, and that
+  its assertions match what the called function does.
+- A changed function signature or behavior: check the callers
+  that depend on it.
+
 Assign severity consistently:
 - critical: production failure, security breach, or data loss.
 - high: significant bug, security risk, or degradation likely
@@ -54,8 +66,10 @@ the corrected line content
 
 The suggestion block replaces only the commented line; keep it
 minimal, syntactically valid, and match the file's indentation
-exactly. Do not suggest code that replaces more lines than the
-comment targets. If an exact safe replacement is not possible,
-explain the fix without a suggestion block.
+exactly. Apply it mentally to that one line: the result must
+compile and must not duplicate the lines around it. Do not
+suggest code that replaces more lines than the comment targets.
+If an exact safe replacement is not possible, or the fix needs
+a broader edit, explain the fix without a suggestion block.
 If there is nothing worth flagging, return an empty
 "comments" array.

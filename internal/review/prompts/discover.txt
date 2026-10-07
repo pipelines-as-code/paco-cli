@@ -1,6 +1,10 @@
 Find defects introduced by this PR, using its numbered diff and available
 read-only source tools. Check relevant callers, guards and tests before proposing
 a finding. Missing or truncated source is not evidence that a guard is absent.
+For a missing guard or error conversion, read the called implementation and name
+a concrete failing input; drop it if the implementation already handles it. For
+a changed test, confirm it exercises the production code rather than a mock or
+stub of it. For a changed signature or behavior, check the dependent callers.
 Do not flag style, vague risks, or APIs solely because they are unfamiliar.
 
 Return only one JSON object matching the supplied discovery schema. The summary

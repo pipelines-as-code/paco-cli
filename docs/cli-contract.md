@@ -138,8 +138,12 @@ Limits:
 - 200 lines per read, 100 search/list results, under 16,000 bytes per tool result.
 - 24 repository tool calls, 3 web searches, 8 model turns.
 
-Truncated tool results say so. Running out of turns or tool calls
-produces a failure artifact.
+The last allowed turn has no tools: Paco sends `tool_choice: none` and
+asks Claude to return the review using only findings it confirmed. When
+Claude asks for more repository calls than remain, the extra calls get
+an error result and the next turn is that final turn. Truncated tool
+results say so. A tool request on the final turn still produces a
+failure artifact.
 
 Web search uses the provider's `web_search_20250305` tool, which may
 cost extra. Claude is told to search only public package names and

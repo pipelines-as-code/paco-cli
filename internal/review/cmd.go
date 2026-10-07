@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
+	"github.com/pipelines-as-code/paco-cli/internal/diff"
 	"github.com/pipelines-as-code/paco-cli/internal/model"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
 	"github.com/pipelines-as-code/paco-cli/internal/source"
@@ -37,7 +38,8 @@ Web search, when available, is only for public library documentation and release
 versions and API names. Never include repository code, private identifiers, credentials or internal URLs in a web query.
 Prefer official documentation matching the project's declared version; newer releases alone do not prove a bug.
 Include source URLs in a finding when it relies on web documentation. Do not invent citations.
-Use tools only when necessary. You have at most 24 repository calls, 3 web searches and 8 model turns.
+Use tools only when necessary. You have at most 24 repository calls, 3 web searches and 8 model turns. The last turn has no tools:
+it must contain your final answer, so leave room for it.
 Your final response must be the requested review JSON object with no prose or markdown fences.`
 
 type Options struct {
@@ -283,6 +285,9 @@ func Run(ctx context.Context, opts Options) error {
 	normalized.SummaryFindings = nil
 	if mode == "summary" {
 		normalized.Comments = []Comment{}
+	} else {
+		parsed, _ := diff.Parse(string(diffData))
+		normalized.Comments = guardSuggestions(normalized.Comments, parsed)
 	}
 	data, err := json.Marshal(normalized)
 	if err != nil {

@@ -288,13 +288,26 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 		}
 	}
 	clientTools := params.Tools
+	hasTools := req.Tools != nil || req.WebSearch
 	var toolCalls, searches int64
-	for range limits.Turns {
+	toolsExhausted := false
+	for turn := range limits.Turns {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
+		// The last turn, or the turn after the repository call allowance runs
+		// out, has no tools so the model answers with what it has confirmed.
+		final := hasTools && (turn == limits.Turns-1 || toolsExhausted)
 		params.Tools = append([]anthropic.ToolUnionParam(nil), clientTools...)
-		if req.WebSearch && searches < limits.WebSearches {
+		params.ToolChoice = anthropic.ToolChoiceUnionParam{}
+		if final {
+			if len(params.Tools) > 0 {
+				params.ToolChoice = anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}
+			}
+			if len(params.Messages) > 1 {
+				params.Messages = appendFinalInstruction(params.Messages)
+			}
+		} else if req.WebSearch && searches < limits.WebSearches {
 			params.Tools = append(params.Tools, anthropic.ToolUnionParam{
 				OfWebSearchTool20250305: &anthropic.WebSearchTool20250305Param{
 					MaxUses: anthropic.Int(limits.WebSearches - searches),
@@ -361,11 +374,19 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 				if msg.StopReason != anthropic.StopReasonToolUse {
 					return Result{}, &IncompleteError{Reason: "tool request without tool_use stop reason"}
 				}
-				if toolCalls >= limits.ToolCalls {
-					return Result{}, &IncompleteError{Reason: "repository tool call limit reached"}
+				if final {
+					if toolCalls >= limits.ToolCalls {
+						return Result{}, &IncompleteError{Reason: "repository tool call limit reached"}
+					}
+					return Result{}, &IncompleteError{Reason: "model turn limit reached"}
 				}
 				if !allowed[block.Name] {
 					return Result{}, &IncompleteError{Reason: "unexpected repository tool"}
+				}
+				if toolCalls >= limits.ToolCalls {
+					toolsExhausted = true
+					results = append(results, anthropic.NewToolResultBlock(block.ID, toolLimitMessage, true))
+					continue
 				}
 				if err := ctx.Err(); err != nil {
 					return Result{}, err
@@ -416,6 +437,24 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 		}
 	}
 	return Result{}, &IncompleteError{Reason: "model turn limit reached"}
+}
+
+const (
+	toolLimitMessage = "Repository tool call limit reached. No more repository calls are available; answer now."
+	finalInstruction = "Tool budget exhausted. Do not request more tools. Return the final answer now in the required format, " +
+		"using only findings you confirmed. Omit hypotheses you could not check."
+)
+
+// appendFinalInstruction adds the closing instruction to the pending tool
+// results, or as its own user message after an assistant turn.
+func appendFinalInstruction(messages []anthropic.MessageParam) []anthropic.MessageParam {
+	text := anthropic.NewTextBlock(finalInstruction)
+	last := &messages[len(messages)-1]
+	if last.Role == anthropic.MessageParamRoleUser {
+		last.Content = append(last.Content, text)
+		return messages
+	}
+	return append(messages, anthropic.NewUserMessage(text))
 }
 
 func (c *client) streamMessage(ctx context.Context, params anthropic.MessageNewParams) (anthropic.Message, error) {

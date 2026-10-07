@@ -70,6 +70,7 @@ internal/eval/        opt-in quality evaluation and human-adjudicated scoring
 internal/reviewbench/ ReviewBench adapter
 hack/paco-eval/       evaluation runner (maintainers only, not released)
 hack/paco-reviewbench/ ReviewBench adapter image and configs (not released)
+tekton/               shared Pipeline and example PipelineRun for users
 ```
 
 ## Review evaluations

@@ -41,13 +41,21 @@ variable, artifact, and limit.
 
 ## Pipelines-as-Code setup
 
-1. Copy [`examples/pipelinerun.yaml`](examples/pipelinerun.yaml)
-   (Vertex AI) or
-   [`examples/pipelinerun-anthropic.yaml`](examples/pipelinerun-anthropic.yaml)
-   (Anthropic API) to `.tekton/paco.yaml` and update the `CHANGEME`
-   values.
+Paco ships a shared Tekton Pipeline,
+[`tekton/paco.pipeline.yaml`](tekton/paco.pipeline.yaml). Your repository
+only holds a short PipelineRun that sets the triggers and settings.
+Pipelines-as-Code fetches the Pipeline from this repository on each run
+through its
+[remote pipeline annotation](https://pipelinesascode.com/docs/guides/pipeline-resolution/remote-pipelines/),
+so you get fixes without editing your copy.
 
-2. Create the model credentials secret:
+1. Copy [`tekton/paco.pipelinerun.yaml`](tekton/paco.pipelinerun.yaml) to
+   `.tekton/paco.yaml` in your repository. For Vertex AI, set
+   `vertex_project`. The other parameters are optional and listed in the
+   file with their defaults.
+
+2. Create the model credentials secret in the namespace of your
+   Repository CR:
 
    ```shell
    # Vertex AI
@@ -59,7 +67,8 @@ variable, artifact, and limit.
      --from-literal=api-key=sk-ant-...
    ```
 
-   Pipelines-as-Code provides the GitHub token through
+   Paco uses the Anthropic API when that secret exists and Vertex AI
+   otherwise. Pipelines-as-Code provides the GitHub token through
    `{{git_auth_secret}}`.
 
 3. Optionally add review rules at `.tekton/ai/REVIEW.md` (see
@@ -68,6 +77,12 @@ variable, artifact, and limit.
 
 Paco reviews PRs opened or reopened against `main`. Comment
 `/paco review` for a new review or `/paco summary` for a summary only.
+
+The annotation URL and the `image` parameter both follow `main`. To pin
+a version, replace `main` in the URL with a release tag and set `image`
+to the matching tag. To try unreleased changes, see
+[container images](docs/development.md#container-images) for the
+`paco-next` image.
 
 ## Installation
 

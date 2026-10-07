@@ -68,6 +68,7 @@ internal/artifact/    workspace files
 internal/security/    redaction and secret scanning
 internal/eval/        opt-in quality evaluation and human-adjudicated scoring
 internal/reviewbench/ ReviewBench adapter
+hack/paco-eval/       evaluation runner (maintainers only, not released)
 hack/paco-reviewbench/ ReviewBench adapter image and configs (not released)
 ```
 
@@ -95,7 +96,7 @@ the reviewer's context.
 List synthetic cases without credentials or network access:
 
 ```shell
-go run ./cmd/paco-eval --list
+go run ./hack/paco-eval --list
 ```
 
 Live runs require explicit case selection and token allowances. They use the
@@ -105,7 +106,7 @@ local validation still applies. Use `--no-structured-output=false` only if
 the provider permits that feature. Reports record this setting.
 
 ```shell
-go run ./cmd/paco-eval --live \
+go run ./hack/paco-eval --live \
   --cases division-guard-removed,division-guard-retained \
   --strategy verified --repeat 3 \
   --max-input-tokens 100000 --max-output-tokens 12000 \
@@ -142,7 +143,7 @@ findings. Each finding must match a labeled issue or receive the explicit
 missing judgments cause an error rather than being counted as false positives.
 
 ```shell
-go run ./cmd/paco-eval --score /tmp/paco-verified.json \
+go run ./hack/paco-eval --score /tmp/paco-verified.json \
   --judgments /tmp/paco-judgments.json
 ```
 

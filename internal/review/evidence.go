@@ -59,6 +59,9 @@ type verdict struct {
 type evidenceContext struct {
 	lines   map[string]map[string]map[int]string
 	changed map[string]map[string]map[int]bool
+	// shown holds every line a diff hunk displays, including context lines,
+	// which are valid anchors for a review comment.
+	shown map[string]map[string]map[int]bool
 }
 
 func (c evidenceContext) validate(refs []Evidence, path string, requireChanged bool) error {
@@ -113,8 +116,8 @@ func (c evidenceContext) validateCandidate(v Candidate) error {
 	if v.Side != "head" && v.Side != "before" {
 		return errors.New("finding has an invalid side")
 	}
-	if !c.changed[v.Side][v.Path][v.Line] {
-		return errors.New("finding anchor is not a changed line")
+	if !c.shown[v.Side][v.Path][v.Line] {
+		return errors.New("finding anchor is not a line shown in the diff")
 	}
 	if !validSeverities[v.Severity] {
 		return errors.New("finding has an invalid severity")

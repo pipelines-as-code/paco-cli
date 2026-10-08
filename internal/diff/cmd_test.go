@@ -165,7 +165,7 @@ func TestRunSuccess(t *testing.T) {
 	headSHA, _ := os.ReadFile(filepath.Join(ws, artifact.FileHeadSHA))
 	assert.Equal(t, string(headSHA), "abc123")
 	validLines, _ := os.ReadFile(filepath.Join(ws, artifact.FileValidLines))
-	assert.Equal(t, string(validLines), `{"a.go":{"2":true}}`)
+	assert.Equal(t, string(validLines), `{"a.go":{"1":true,"2":true}}`)
 	assert.Assert(t, f.called("POST /repos/owner/repo/issues/1/reactions"), "eyes reaction on the PR")
 }
 

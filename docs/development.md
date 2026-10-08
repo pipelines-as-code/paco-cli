@@ -73,6 +73,16 @@ hack/paco-reviewbench/ ReviewBench adapter image and configs (not released)
 tekton/               shared Pipeline and example PipelineRun for users
 ```
 
+## Architecture decision records
+
+These proposals describe possible review improvements and their evaluation
+requirements. They do not change current behavior or approve implementation.
+
+- [0001: Go-aware change inventory](adr/0001-go-aware-change-inventory.md)
+- [0002: Discovery coverage and a targeted follow-up pass](adr/0002-discovery-coverage-and-follow-up.md)
+- [0003: Type-resolved Go navigation](adr/0003-type-resolved-go-navigation.md)
+- [0004: Multi-language structural search](adr/0004-multilanguage-structural-search.md)
+
 ## Review evaluations
 
 The original synthetic corpus is in `internal/review/testdata/eval/cases.json`.

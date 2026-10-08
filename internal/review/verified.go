@@ -371,6 +371,10 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if status.Rejected > 0 {
 		status.Limitations = append(status.Limitations, fmt.Sprintf("%d candidates lacked valid source evidence.", status.Rejected))
 	}
+	fmt.Printf("Discovery: %d candidates, %d rejected, %d duplicates\n", status.Candidates, status.Rejected, status.Duplicates)
+	for _, d := range status.Decisions {
+		fmt.Println(dispositionLine(d, backend.Secrets))
+	}
 	result := Review{
 		Verified: true, Summary: discovered.Summary, ReviewScore: discovered.ReviewScore,
 		SecuritySensitive: discovered.SecuritySensitive, Comments: []Comment{}, SummaryFindings: []Comment{},
@@ -396,10 +400,14 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		}
 		var accepted []Candidate
 		for _, decision := range verified.Decisions {
-			status.Decisions = append(status.Decisions, Disposition{decision.ID, decision.Outcome, decision.Reason})
+			d := Disposition{decision.ID, decision.Outcome, decision.Reason}
+			status.Decisions = append(status.Decisions, d)
+			fmt.Println(dispositionLine(d, backend.Secrets))
 			switch decision.Outcome {
 			case "accept":
-				accepted = append(accepted, byID[decision.ID])
+				c := byID[decision.ID]
+				c.Severity = decision.Severity
+				accepted = append(accepted, c)
 			case "insufficient_evidence":
 				status.Rejected++
 				status.Limitations = append(status.Limitations, "A candidate could not be verified with the available context.")
@@ -445,6 +453,13 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	return ws.Write(artifact.FileReview, data)
 }
 
+// dispositionLine formats one candidate decision for the step log. Candidate
+// IDs and reasons are model output, so they are scrubbed and kept to one line.
+func dispositionLine(d Disposition, secrets []string) string {
+	reason := strings.Join(strings.Fields(d.Reason), " ")
+	return "Candidate " + scrubber(secrets)(fmt.Sprintf("%s: %s: %s", d.ID, d.Outcome, reason))
+}
+
 // responseShape describes a rejected model response without its content.
 func responseShape(phase, text string) string {
 	trimmed := strings.TrimSpace(text)
@@ -461,26 +476,38 @@ func responseShape(phase, text string) string {
 		phase, len(text), first, last, strings.Count(text, "```"), strings.Count(prefix, "```"), brace, strings.ContainsAny(prefix, "[]"))
 }
 
+// findingBody renders an accepted candidate as labelled lines. Code fences
+// are dropped because suggestion blocks are not published from this path.
 func findingBody(c Candidate) string {
 	var parts []string
-	for _, field := range []string{c.Claim, c.Trigger, c.Impact, c.Remedy} {
-		var fence string
-		for _, line := range strings.Split(field, "\n") {
-			trimmed := strings.TrimLeft(line, " \t>")
-			if fence != "" {
-				if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, fence[:1]+" \t") == "" {
-					fence = ""
-				}
-				continue
+	for _, field := range []struct{ label, text string }{
+		{"Claim", c.Claim}, {"Trigger", c.Trigger}, {"Impact", c.Impact}, {"Fix", c.Remedy},
+	} {
+		if text := unfenced(field.text); text != "" {
+			parts = append(parts, "**"+field.label+".** "+text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func unfenced(field string) string {
+	var parts []string
+	var fence string
+	for _, line := range strings.Split(field, "\n") {
+		trimmed := strings.TrimLeft(line, " \t>")
+		if fence != "" {
+			if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, fence[:1]+" \t") == "" {
+				fence = ""
 			}
-			if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-				char := trimmed[:1]
-				fence = trimmed[:len(trimmed)-len(strings.TrimLeft(trimmed, char))]
-				continue
-			}
-			if text := strings.TrimSpace(line); text != "" {
-				parts = append(parts, text)
-			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			char := trimmed[:1]
+			fence = trimmed[:len(trimmed)-len(strings.TrimLeft(trimmed, char))]
+			continue
+		}
+		if text := strings.TrimSpace(line); text != "" {
+			parts = append(parts, text)
 		}
 	}
 	return strings.Join(parts, " ")
@@ -495,6 +522,11 @@ func (t *coverageTools) Call(ctx context.Context, name string, input json.RawMes
 	output, err := t.Toolset.Call(ctx, name, input)
 	if err != nil || strings.Contains(output, "[Result truncated") {
 		t.incomplete = true
+		detail := "result truncated"
+		if err != nil {
+			detail = err.Error()
+		}
+		fmt.Printf("Model tool %s incomplete: %s\n", name, detail)
 	}
 	return output, err
 }

@@ -166,8 +166,9 @@ trusted rules come from the target base revision.
 Candidates specify a triggering condition, impact, remedy, and exact source
 quotes. Local checks reject invented paths, ranges, quotes and changed-line
 anchors. The verifier looks for counterevidence and returns one decision per
-candidate. A valid citation is not proof of a bug; model judgment is still
-required. Prior trusted feedback supports issue-level deduplication. Different
+candidate; an accepted decision carries the published severity, set from the
+confirmed impact. A valid citation is not proof of a bug; model judgment is
+still required. Prior trusted feedback supports issue-level deduplication. Different
 issues on the same line may both be published.
 
 Verified-mode diff context and file/search results encode source lines as
@@ -196,7 +197,8 @@ The extracted object still has to pass every schema and evidence check.
 
 `.paco-status.json` records versioned provenance, usage, limitations, candidate
 outcomes, publication counts and a scrubbed `failure_reason` when verification
-fails. Verified `.paco-review.json` output can include
+fails. Candidate outcomes are also printed in the review log, and the summary
+comment lists unpublished candidates with their outcome and reason. Verified `.paco-review.json` output can include
 `summary_findings` for deletion-side findings without an added-line anchor.
 Raw model transcripts are not persisted. Review output, mode, failure,
 security-block and status artifacts are cleared before each review attempt.

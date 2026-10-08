@@ -102,7 +102,7 @@ func TestDiscoveryProtocol(t *testing.T) {
 
 func TestVerifierProtocol(t *testing.T) {
 	c := testCandidate()
-	base := decision{ID: c.ID, Outcome: "accept", Reason: "Guard removed.", Evidence: c.Evidence}
+	base := decision{ID: c.ID, Outcome: "accept", Reason: "Guard removed.", Severity: "high", Evidence: c.Evidence}
 	tests := []struct {
 		name   string
 		change func(*verdict)
@@ -182,7 +182,7 @@ func TestResponseObjectEnvelope(t *testing.T) {
 	assert.ErrorContains(t, err, "not a JSON object")
 	c := testCandidate()
 	bad := verdict{Summary: "Changes division.", Decisions: []decision{{
-		ID: c.ID, Outcome: "accept", Reason: "Guard removed.",
+		ID: c.ID, Outcome: "accept", Reason: "Guard removed.", Severity: "high",
 		Evidence: []Evidence{{Revision: "head", Path: "a.go", Start: 1, End: 1, Quote: "invented"}},
 	}}}
 	_, err = parseVerdict("```json\n"+jsonText(t, bad)+"\n```", []Candidate{c}, testEvidenceContext())

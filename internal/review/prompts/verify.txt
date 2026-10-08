@@ -9,7 +9,11 @@ Return exactly one JSON object matching the supplied verifier schema and exactly
 one decision per supplied candidate ID. Do not create new candidates.
 Outcomes are "accept", "reject", or "insufficient_evidence". If context needed
 to decide is unavailable, use insufficient_evidence. Give a concise factual
-reason, not internal reasoning. Accepted findings require exact source quotes
+reason, not internal reasoning. Reject a candidate whose trigger or impact
+contradicts the quoted source, even if the underlying defect is plausible.
+Set severity for every accepted candidate from its confirmed impact, not from
+the candidate: a panic, crash, data loss or authorization bypass is at least
+high; critical is reserved for remote exploitation or widespread data loss. Accepted findings require exact source quotes
 and a changed-line reference in the finding's file, even if the discovery
 already supplied them. Evidence uses revision "head" or "before", inclusive
 1-based line ranges (at most 200 lines), and exact quotes without line prefixes.

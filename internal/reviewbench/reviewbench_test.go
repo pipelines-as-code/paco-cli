@@ -128,7 +128,7 @@ func TestRunVerifiedAnchorsDeletedLines(t *testing.T) {
 	}
 	verdict := map[string]any{
 		"summary":   "Replaces the zero guard with logging.",
-		"decisions": []map[string]any{{"id": "guard", "outcome": "accept", "reason": "Guard removed.", "duplicate_of": "", "evidence": evidence}},
+		"decisions": []map[string]any{{"id": "guard", "outcome": "accept", "reason": "Guard removed.", "duplicate_of": "", "severity": "high", "evidence": evidence}},
 	}
 	cfg := config(t, divDiff, jsonText(t, discovery), jsonText(t, verdict))
 	cfg.Review.VerifyFindings = true

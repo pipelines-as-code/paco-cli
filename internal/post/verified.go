@@ -94,6 +94,9 @@ func postVerified(ctx context.Context, ws *artifact.Workspace, gh *ghclient.Clie
 		body += fmt.Sprintf("\n\n[%s] `%s` (before line %d): %s",
 			strings.ToUpper(finding.Severity), finding.Path, finding.Line, finding.Body)
 	}
+	if block := decisionsBlock(status.Decisions); block != "" {
+		body += "\n\n" + block
+	}
 	body += fmt.Sprintf("\n\n<sub>Reviewed commit: %s. %d verified findings; %d summary-only.</sub>",
 		status.HeadSHA, status.Accepted, len(rev.SummaryFindings))
 	if reason := security.ScanSecrets(body, gh.Token()); reason != "" {
@@ -118,4 +121,23 @@ func postVerified(ctx context.Context, ws *artifact.Workspace, gh *ghclient.Clie
 	}
 	applyLabels(ctx, gh, repo, pr, rev.ReviewScore.Rating, rev.SecuritySensitive)
 	return nil
+}
+
+// decisionsBlock lists candidates that were not published, so a reviewer can
+// see what the model considered and why it was dropped. Only the id, outcome
+// and reason appear; unverified claims stay out of the comment.
+func decisionsBlock(decisions []review.Disposition) string {
+	var lines []string
+	for _, d := range decisions {
+		if d.Outcome == "accept" {
+			continue
+		}
+		reason := strings.Join(strings.Fields(d.Reason), " ")
+		lines = append(lines, fmt.Sprintf("- `%s`: %s. %s", d.ID, d.Outcome, reason))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("<details>\n<summary>%d candidates not published</summary>\n\n%s\n</details>",
+		len(lines), strings.Join(lines, "\n"))
 }

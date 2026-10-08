@@ -21,7 +21,7 @@ type Candidate struct {
 	Path     string     `json:"path"`
 	Line     int        `json:"line"`
 	Side     string     `json:"side"`
-	Severity string     `json:"severity"`
+	Severity string     `json:"severity,omitempty"`
 	Claim    string     `json:"claim"`
 	Trigger  string     `json:"trigger"`
 	Impact   string     `json:"impact"`
@@ -38,11 +38,14 @@ type discovery struct {
 }
 
 type decision struct {
-	ID          string     `json:"id"`
-	Outcome     string     `json:"outcome"`
-	Reason      string     `json:"reason"`
-	DuplicateOf string     `json:"duplicate_of"`
-	Evidence    []Evidence `json:"evidence"`
+	ID          string `json:"id"`
+	Outcome     string `json:"outcome"`
+	Reason      string `json:"reason"`
+	DuplicateOf string `json:"duplicate_of"`
+	// Severity is the verifier's assessment from the confirmed impact; it
+	// replaces the discovery severity of an accepted candidate.
+	Severity string     `json:"severity,omitempty"`
+	Evidence []Evidence `json:"evidence"`
 }
 
 type verdict struct {
@@ -215,6 +218,9 @@ func parseVerdict(text string, candidates []Candidate, context evidenceContext) 
 		case "accept":
 			if d.DuplicateOf != "" {
 				return v, errors.New("accepted candidate cannot be a duplicate")
+			}
+			if !validSeverities[d.Severity] {
+				return v, errors.New("accepted candidate requires a severity")
 			}
 			if err := context.validate(d.Evidence, c.Path, true); err != nil {
 				return v, fmt.Errorf("invalid verifier evidence: %w", err)

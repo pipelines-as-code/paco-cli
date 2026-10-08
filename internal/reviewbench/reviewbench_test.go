@@ -212,7 +212,7 @@ func TestDiagnosticsVerifiedFailure(t *testing.T) {
 	assert.ErrorContains(t, reviewbench.Run(context.Background(), cfg), "review failed")
 	report := readDiagnostics(t, cfg.Diagnostics)
 	assert.Equal(t, report.Outcome, "failed")
-	assert.Equal(t, report.Verification.FailureReason, "response is not a JSON object")
+	assert.Equal(t, report.Verification.FailureReason, "discovery: response is not a JSON object")
 }
 
 func TestResponseCapture(t *testing.T) {

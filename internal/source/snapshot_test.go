@@ -32,6 +32,9 @@ func archive(t *testing.T, files ...archiveFile) []byte {
 			kind = tar.TypeReg
 		}
 		h := &tar.Header{Name: f.name, Mode: 0o600, Typeflag: kind}
+		if kind == tar.TypeXGlobalHeader {
+			h = &tar.Header{Typeflag: kind, PAXRecords: map[string]string{"comment": f.content}}
+		}
 		if kind == tar.TypeReg {
 			h.Size = int64(len(f.content))
 		}
@@ -71,6 +74,18 @@ func TestSnapshotFiltersAndRedacts(t *testing.T) {
 	decoded, err := Decode(encoded, "sha")
 	assert.NilError(t, err)
 	assert.DeepEqual(t, decoded, s)
+}
+
+func TestSnapshotSkipsPAXGlobalHeader(t *testing.T) {
+	data := archive(
+		t,
+		archiveFile{kind: tar.TypeXGlobalHeader, content: "0123456789abcdef"},
+		archiveFile{name: "root/a.go", content: "package a\n"},
+	)
+	s, err := FromArchive(data, "sha")
+	assert.NilError(t, err)
+	assert.DeepEqual(t, s.Files, map[string]string{"a.go": "package a\n"})
+	assert.Equal(t, s.Excluded, 0)
 }
 
 func TestSnapshotRejectsUnsafeArchives(t *testing.T) {

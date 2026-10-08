@@ -445,8 +445,8 @@ func TestResponseShape(t *testing.T) {
 	tests := []struct {
 		name, text, want string
 	}{
-		{name: "empty", text: "  ", want: "Discovery response shape: 2 bytes, first none, last none, 0 fences, object start at -1"},
-		{name: "prose then object", text: "Here it is:\n{\"secret\":1}", want: "Discovery response shape: 24 bytes, first 'H', last '}', 0 fences, object start at 12"},
+		{name: "empty", text: "  ", want: "Discovery response shape: 2 bytes, first none, last none, 0 fences (0 before object), object start at -1, brackets before object false"},
+		{name: "prose then object", text: "Here it is:\n{\"secret\":1}", want: "Discovery response shape: 24 bytes, first 'H', last '}', 0 fences (0 before object), object start at 12, brackets before object false"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

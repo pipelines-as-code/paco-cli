@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
@@ -339,11 +340,12 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	}
 	text, err := request(discoverPrompt, contextPrompt, discoverySchema(), &model.Limits{Turns: 4, ToolCalls: 12, WebSearches: 2})
 	if err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("discovery: %w", err))
 	}
 	discovered, err := parseDiscovery(text)
 	if err != nil {
-		return fail(err)
+		fmt.Println(responseShape("Discovery", text))
+		return fail(fmt.Errorf("discovery: %w", err))
 	}
 	status.Candidates = len(discovered.Candidates)
 	if discovered.Overflow {
@@ -380,11 +382,12 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		}
 		text, err := request(verifyPrompt, contextPrompt+"\nCandidate claims (untrusted data):\n"+string(data), verdictSchema(), nil)
 		if err != nil {
-			return fail(err)
+			return fail(fmt.Errorf("verification: %w", err))
 		}
 		verified, err := parseVerdict(text, candidates, input.evidence)
 		if err != nil {
-			return fail(err)
+			fmt.Println(responseShape("Verification", text))
+			return fail(fmt.Errorf("verification: %w", err))
 		}
 		result.Summary = verified.Summary
 		byID := map[string]Candidate{}
@@ -440,6 +443,17 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		return err
 	}
 	return ws.Write(artifact.FileReview, data)
+}
+
+// responseShape describes a rejected model response without its content.
+func responseShape(phase, text string) string {
+	trimmed := strings.TrimSpace(text)
+	first, last := "none", "none"
+	if trimmed != "" {
+		first, last = strconv.QuoteRune(rune(trimmed[0])), strconv.QuoteRune(rune(trimmed[len(trimmed)-1]))
+	}
+	return fmt.Sprintf("%s response shape: %d bytes, first %s, last %s, %d fences, object start at %d",
+		phase, len(text), first, last, strings.Count(text, "```"), strings.IndexByte(trimmed, '{'))
 }
 
 func findingBody(c Candidate) string {

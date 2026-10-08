@@ -440,3 +440,19 @@ func TestSummaryModeCannotPublishFindings(t *testing.T) {
 	assert.Assert(t, !result.Verified)
 	assert.Assert(t, !strings.Contains(result.Summary, "do not publish"))
 }
+
+func TestResponseShape(t *testing.T) {
+	tests := []struct {
+		name, text, want string
+	}{
+		{name: "empty", text: "  ", want: "Discovery response shape: 2 bytes, first none, last none, 0 fences, object start at -1"},
+		{name: "prose then object", text: "Here it is:\n{\"secret\":1}", want: "Discovery response shape: 24 bytes, first 'H', last '}', 0 fences, object start at 12"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := responseShape("Discovery", tt.text)
+			assert.Equal(t, got, tt.want)
+			assert.Assert(t, !strings.Contains(got, "secret"))
+		})
+	}
+}

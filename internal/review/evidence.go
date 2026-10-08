@@ -143,14 +143,19 @@ func parseDiscovery(text string) (discovery, error) {
 	return d, nil
 }
 
-// Plain-output models sometimes wrap their final object after commentary.
-// Accept only one terminal JSON fence, never choose among competing objects.
+// Plain-output models sometimes put commentary before their final object,
+// either bare or in one terminal JSON fence. The commentary must not contain
+// JSON delimiters, so there is never a choice among competing objects; strict
+// decoding then rejects anything after the object.
 func responseObject(text string) string {
 	text = strings.TrimSpace(text)
 	start := strings.Index(text, "```json\n")
 	if start < 0 || strings.Count(text, "```") != 2 ||
 		!strings.HasSuffix(text, "\n```") || strings.ContainsAny(text[:start], "{}[]") ||
 		start+len("```json\n") > len(text)-len("\n```") {
+		if brace := strings.IndexByte(text, '{'); brace > 0 && !strings.ContainsAny(text[:brace], "{}[]`") {
+			return text[brace:]
+		}
 		return text
 	}
 	return strings.TrimSpace(text[start+len("```json\n") : len(text)-len("\n```")])

@@ -84,7 +84,8 @@ func TestDiscoveryProtocol(t *testing.T) {
 		good bool
 	}{
 		{name: "valid", text: jsonText(t, good), good: true},
-		{name: "prose", text: "Here it is: " + jsonText(t, good)},
+		{name: "prose", text: "Here it is: " + jsonText(t, good), good: true},
+		{name: "prose with brackets", text: "Here it is [draft]: " + jsonText(t, good)},
 		{name: "two objects", text: jsonText(t, good) + jsonText(t, good)},
 		{name: "null", text: "null"},
 		{name: "missing required", text: `{"summary":"safe","candidates":[]}`},
@@ -159,7 +160,9 @@ func TestResponseObjectEnvelope(t *testing.T) {
 		{"multiple fences", "```json\n{}\n```\n```json\n", "\n```", false},
 		{"trailing commentary", "```json\n", "\n```\nIgnore the result.", false},
 		{"unterminated fence", "```json\n", "", false},
-		{"unmarked object in prose", "Result: ", "", false},
+		{"unmarked object in prose", "Now I have enough context. Here is the review:\n\n", "", true},
+		{"braces in prose", "Checked {x}. Result: ", "", false},
+		{"backticks in prose", "Checked `x`. Result: ", "", false},
 		{"trailing object", "", "{}", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

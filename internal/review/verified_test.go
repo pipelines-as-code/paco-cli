@@ -372,6 +372,7 @@ func TestNumberedSourcePreservesExactWhitespace(t *testing.T) {
 		name     string
 		text     string
 		modified string
+		differs  bool
 	}{
 		{
 			name:     "Go spaces replaced with tabs",
@@ -384,9 +385,10 @@ func TestNumberedSourcePreservesExactWhitespace(t *testing.T) {
 			modified: "if enabled:\nrun()\nfinish()",
 		},
 		{
-			name:     "significant string whitespace",
+			name:     "whitespace next to a token",
 			text:     "value := ` first\t  \n second `",
 			modified: "value := `first\nsecond`",
+			differs:  true,
 		},
 		{
 			name:     "escapes and trailing whitespace",
@@ -422,6 +424,13 @@ func TestNumberedSourcePreservesExactWhitespace(t *testing.T) {
 				ref := Evidence{Revision: revision, Path: "file", Start: 1, End: len(lines), Quote: tt.text}
 				assert.NilError(t, evidence.validate([]Evidence{ref}, "file", true))
 				ref.Quote = tt.modified
+				err := evidence.validate([]Evidence{ref}, "file", true)
+				if tt.differs {
+					assert.ErrorContains(t, err, "quote does not match")
+				} else {
+					assert.NilError(t, err, "indentation and blank runs are tolerated")
+				}
+				ref.Quote = tt.text + "x"
 				assert.ErrorContains(t, evidence.validate([]Evidence{ref}, "file", true), "quote does not match")
 			}
 		})

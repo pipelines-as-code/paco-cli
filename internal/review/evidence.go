@@ -82,14 +82,31 @@ func (c evidenceContext) validate(refs []Evidence, path string, requireChanged b
 			lines = append(lines, line)
 			changed = changed || (ref.Path == path && c.changed[ref.Revision][ref.Path][n])
 		}
-		if ref.Quote != strings.Join(lines, "\n") {
-			return errors.New("evidence quote does not match source")
+		if !sameSource(ref.Quote, strings.Join(lines, "\n")) {
+			return errQuoteMismatch
 		}
 	}
 	if requireChanged && !changed {
 		return errors.New("evidence does not reference a changed line in the finding's file")
 	}
 	return nil
+}
+
+var errQuoteMismatch = errors.New("evidence quote does not match source")
+
+// sameSource compares quoted and actual source ignoring indentation, trailing
+// whitespace and runs of blanks inside a line. Models often retype tabs as
+// spaces or realign code; the words and symbols still have to match exactly.
+func sameSource(quote, source string) bool {
+	return normalizeSource(quote) == normalizeSource(source)
+}
+
+func normalizeSource(text string) string {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = strings.Join(strings.Fields(line), " ")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (c evidenceContext) validateCandidate(v Candidate) error {

@@ -5,6 +5,10 @@ For a missing guard or error conversion, read the called implementation and name
 a concrete failing input; drop it if the implementation already handles it. For
 a changed test, confirm it exercises the production code rather than a mock or
 stub of it. For a changed signature or behavior, check the dependent callers.
+For a changed comparison or ordering function, check its invariants (symmetry,
+antisymmetry, equal inputs) for every branch. For a changed normalisation of a
+value (case, trimming, truncation, encoding), search for every other producer
+and consumer of that value and confirm they still agree.
 Do not flag style, vague risks, or APIs solely because they are unfamiliar.
 
 Return only one JSON object matching the supplied discovery schema. The summary

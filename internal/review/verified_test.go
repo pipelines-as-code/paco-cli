@@ -121,7 +121,7 @@ func TestVerifiedReviewHTTP(t *testing.T) {
 	}{
 		{name: "accept deletion", accepted: 1, response: jsonText(t, verdict{
 			Summary:   discovered.Summary,
-			Decisions: []decision{{ID: c.ID, Outcome: "accept", Reason: "Guard is removed.", Evidence: c.Evidence}},
+			Decisions: []decision{{ID: c.ID, Outcome: "accept", Reason: "Guard is removed.", Severity: "high", Evidence: c.Evidence}},
 		})},
 		{name: "counterevidence rejects", response: jsonText(t, verdict{
 			Summary: discovered.Summary,
@@ -289,7 +289,7 @@ func TestVerifiedFileModeCoverage(t *testing.T) {
 				c := candidates[0]
 				responses = append(responses, jsonText(t, verdict{
 					Summary:   "Removes executable permission and a guard.",
-					Decisions: []decision{{ID: c.ID, Outcome: "accept", Reason: "Guard is removed.", Evidence: c.Evidence}},
+					Decisions: []decision{{ID: c.ID, Outcome: "accept", Reason: "Guard is removed.", Severity: "high", Evidence: c.Evidence}},
 				}))
 			}
 			resolve, requests := reviewServer(t, responses)
@@ -327,7 +327,7 @@ func TestFindingBodyOmitsUnsafePatches(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := testCandidate()
 			c.Remedy = tt.remedy
-			assert.Equal(t, findingBody(c), c.Claim+" "+c.Trigger+" "+c.Impact+" "+tt.want)
+			assert.Equal(t, findingBody(c), "**Claim.** "+c.Claim+"\n\n**Trigger.** "+c.Trigger+"\n\n**Impact.** "+c.Impact+"\n\n**Fix.** "+tt.want)
 		})
 	}
 }

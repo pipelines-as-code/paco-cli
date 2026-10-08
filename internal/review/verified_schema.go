@@ -131,6 +131,7 @@ func verdictSchema() map[string]any {
 			"outcome":      map[string]any{"type": "string", "enum": []string{"accept", "reject", "insufficient_evidence"}},
 			"reason":       map[string]any{"type": "string"},
 			"duplicate_of": map[string]any{"type": "string"},
+			"severity":     map[string]any{"type": "string", "enum": []string{"critical", "high", "medium", "low", ""}},
 			"evidence":     evidenceSchema(),
 		}, "id", "outcome", "reason", "duplicate_of", "evidence")},
 	}, "summary", "decisions")

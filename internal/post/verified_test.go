@@ -32,6 +32,10 @@ func verifiedArtifacts(t *testing.T) map[string]string {
 		Version: 1, State: "complete", Repo: "owner/repo",
 		PRNumber: 1, HeadSHA: "abc123", ReviewDigest: review.Digest(data), Accepted: 3, Unanchored: 1,
 		BaseRef: "main", TargetBaseSHA: "def456",
+		Decisions: []review.Disposition{
+			{ID: "leak", Outcome: "accept", Reason: "Confirmed."},
+			{ID: "nil-deref", Outcome: "reject", Reason: "Caller guards\nagainst nil."},
+		},
 	}
 	statusData, err := json.Marshal(status)
 	assert.NilError(t, err)
@@ -57,6 +61,9 @@ func TestPostVerified(t *testing.T) {
 	body := f.Calls("POST " + commentsPath)[0].Body
 	assert.Assert(t, strings.Contains(body, "before line 2"))
 	assert.Assert(t, strings.Contains(body, "3 verified findings"))
+	assert.Assert(t, strings.Contains(body, "<summary>1 candidates not published</summary>"))
+	assert.Assert(t, strings.Contains(body, "- `nil-deref`: reject. Caller guards against nil."))
+	assert.Assert(t, !strings.Contains(body, "`leak`"))
 	data, err := os.ReadFile(filepath.Join(ws, artifact.FileReview))
 	assert.NilError(t, err)
 	status, err := review.ReadStatus(&artifact.Workspace{Dir: ws}, data)

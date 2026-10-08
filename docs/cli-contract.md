@@ -187,10 +187,10 @@ as incomplete coverage. Failed tool reads and truncated results also mark the
 run partial. Budget exhaustion, malformed verifier output, provider errors,
 or invalid verifier citations withhold all findings.
 
-Plain-output responses may wrap the final object in one terminal `json` code
-fence, or leave it bare, optionally preceded by commentary without object or
-array delimiters (or backticks, for a bare object). Multiple fences, competing
-objects and trailing commentary are rejected.
+Plain-output responses may put the final object in a `json` code fence, which
+may be left unclosed, or leave it bare. Commentary before it is allowed when it
+has no object or array delimiters. Multiple objects and trailing commentary
+are rejected.
 The extracted object still has to pass every schema and evidence check.
 
 `.paco-status.json` records versioned provenance, usage, limitations, candidate

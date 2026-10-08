@@ -452,8 +452,13 @@ func responseShape(phase, text string) string {
 	if trimmed != "" {
 		first, last = strconv.QuoteRune(rune(trimmed[0])), strconv.QuoteRune(rune(trimmed[len(trimmed)-1]))
 	}
-	return fmt.Sprintf("%s response shape: %d bytes, first %s, last %s, %d fences, object start at %d",
-		phase, len(text), first, last, strings.Count(text, "```"), strings.IndexByte(trimmed, '{'))
+	brace := strings.IndexByte(trimmed, '{')
+	prefix := trimmed
+	if brace >= 0 {
+		prefix = trimmed[:brace]
+	}
+	return fmt.Sprintf("%s response shape: %d bytes, first %s, last %s, %d fences (%d before object), object start at %d, brackets before object %t",
+		phase, len(text), first, last, strings.Count(text, "```"), strings.Count(prefix, "```"), brace, strings.ContainsAny(prefix, "[]"))
 }
 
 func findingBody(c Candidate) string {

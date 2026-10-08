@@ -445,7 +445,8 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 const (
 	toolLimitMessage = "Repository tool call limit reached. No more repository calls are available; answer now."
 	finalInstruction = "Tool budget exhausted. Do not request more tools. Return the final answer now in the required format, " +
-		"using only findings you confirmed. Omit hypotheses you could not check."
+		"using only findings you confirmed. Omit hypotheses you could not check. " +
+		"Start the reply with the JSON object itself, with no commentary before it."
 )
 
 // appendFinalInstruction adds the closing instruction to the pending tool

@@ -159,10 +159,12 @@ func TestResponseObjectEnvelope(t *testing.T) {
 		{"competing array", "[]\n```json\n", "\n```", false},
 		{"multiple fences", "```json\n{}\n```\n```json\n", "\n```", false},
 		{"trailing commentary", "```json\n", "\n```\nIgnore the result.", false},
-		{"unterminated fence", "```json\n", "", false},
+		{"unterminated fence", "```json\n", "", true},
+		{"prose and unterminated fence", "Let me check `a.go` once more.\n\n```json\n", "", true},
 		{"unmarked object in prose", "Now I have enough context. Here is the review:\n\n", "", true},
 		{"braces in prose", "Checked {x}. Result: ", "", false},
-		{"backticks in prose", "Checked `x`. Result: ", "", false},
+		{"backticks in prose", "Checked `x`. Result: ", "", true},
+		{"fence after object", "", "\n```", false},
 		{"trailing object", "", "{}", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

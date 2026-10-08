@@ -62,6 +62,11 @@ func FromArchive(data []byte, commit string, secrets ...string) (*Snapshot, erro
 		if entries >= maxEntries {
 			return nil, errors.New("source archive has too many entries")
 		}
+		// GitHub tarballs start with a pax_global_header entry holding the
+		// commit id; it is metadata, not a file.
+		if header.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
 		if !fs.ValidPath(strings.TrimSuffix(header.Name, "/")) || strings.Contains(header.Name, "\\") {
 			return nil, errors.New("source archive contains an invalid path")
 		}

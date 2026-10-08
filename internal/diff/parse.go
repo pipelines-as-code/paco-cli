@@ -203,7 +203,8 @@ func ValidLines(parsed *ParsedDiff) map[string]map[string]bool {
 		}
 		for _, hunk := range file.Hunks {
 			for _, line := range hunk.Lines {
-				if line.Kind == "add" {
+				// GitHub accepts review comments on any line a hunk shows.
+				if line.Kind == "add" || line.Kind == "context" {
 					if result[file.NewPath] == nil {
 						result[file.NewPath] = map[string]bool{}
 					}

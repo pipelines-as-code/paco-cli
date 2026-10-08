@@ -33,7 +33,7 @@ A missing token or invalid URL is reported as a skip (`.paco-error`).
 | File | Description |
 |---|---|
 | `.pr.diff` | Redacted PR diff |
-| `.valid-lines.json` | `{file: {line: true}}` for added lines |
+| `.valid-lines.json` | `{file: {line: true}}` for lines shown in the diff on the head side (added and context) |
 | `.existing-inline.json` | `{file: {line: true}}` for lines with existing trusted comments |
 | `.existing-feedback.txt` | Compact digest of existing feedback (max 30KB) |
 | `.existing-feedback.json` | Bounded trusted inline feedback with run-local IDs and availability status |
@@ -163,8 +163,9 @@ snapshot lines against overlapping diff lines. Head and before snapshots share
 the retained-source limits. The before revision is the comparison merge base;
 trusted rules come from the target base revision.
 
-Candidates specify a triggering condition, impact, remedy, and exact source
-quotes. Local checks reject invented paths, ranges, quotes and changed-line
+Candidates anchor on a line the diff shows, including unchanged context lines
+in a hunk, and specify a triggering condition, impact, remedy, and source
+quotes; the evidence still has to include a changed line of the file. Local checks reject invented paths, ranges, quotes and changed-line
 anchors. The verifier looks for counterevidence and returns one decision per
 candidate; an accepted decision carries the published severity, set from the
 confirmed impact. A valid citation is not proof of a bug; model judgment is
@@ -285,7 +286,7 @@ invalid URL is a fatal error.
 1. Create or update the `<!-- paco-review -->` sticky summary comment
 2. Create/ensure `paco/review-*` difficulty labels, apply current, remove stale
 3. Add `security-review` label when `security_sensitive` is true (never removed)
-4. Submit inline review with filtered, deduplicated comments on valid added lines
+4. Submit inline review with filtered, deduplicated comments on valid diff lines
 
 ### Exit Codes
 

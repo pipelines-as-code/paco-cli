@@ -17,6 +17,9 @@ func testEvidenceContext() evidenceContext {
 		changed: map[string]map[string]map[int]bool{
 			"head": {"a.go": {1: true}}, "before": {"a.go": {1: true}},
 		},
+		shown: map[string]map[string]map[int]bool{
+			"head": {"a.go": {1: true, 2: true, 3: true}}, "before": {"a.go": {1: true, 2: true}},
+		},
 	}
 }
 
@@ -52,7 +55,8 @@ func TestCandidateEvidence(t *testing.T) {
 		{name: "invalid range", change: func(c *Candidate) { c.Evidence[0].Start = 0 }},
 		{name: "oversized range", change: func(c *Candidate) { c.Evidence[0].End = 201 }},
 		{name: "unknown revision", change: func(c *Candidate) { c.Evidence[0].Revision = "main" }},
-		{name: "unchanged anchor", change: func(c *Candidate) { c.Line = 3 }},
+		{name: "context anchor", valid: true, change: func(c *Candidate) { c.Line = 3 }},
+		{name: "anchor outside the diff", change: func(c *Candidate) { c.Line = 4 }},
 		{name: "negative anchor", change: func(c *Candidate) { c.Line = -1 }},
 		{name: "missing trigger", change: func(c *Candidate) { c.Trigger = "" }},
 		{name: "missing impact", change: func(c *Candidate) { c.Impact = " " }},

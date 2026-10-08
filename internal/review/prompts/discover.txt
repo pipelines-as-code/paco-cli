@@ -16,8 +16,8 @@ describes behavior changed by the PR, not alleged defects or claims of correctne
 Review difficulty is an integer 1-5. Return at most 30 candidates; set overflow
 to true if candidates had to be omitted. An empty candidates array is valid.
 
-Each candidate must identify a changed line on side "head" (addition) or "before"
-(deletion), a specific claim, the input or situation that triggers it, its
+Each candidate must identify a line shown in the diff, on side "head" (added or
+context line) or "before" (deleted line), a specific claim, the input or situation that triggers it, its
 observable impact, and a remedy. Give each candidate a unique ID of at most 64 bytes.
 Evidence must quote exact lines from the supplied diff or snapshot, without
 numbering prefixes. Ranges are inclusive, 1-based, at most 200 lines each.

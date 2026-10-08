@@ -156,6 +156,7 @@ func buildEvidenceContext(parsed *source.Diff, head, before *source.Snapshot) (e
 	c := evidenceContext{
 		lines:   map[string]map[string]map[int]string{"head": {}, "before": {}},
 		changed: map[string]map[string]map[int]bool{"head": {}, "before": {}},
+		shown:   map[string]map[string]map[int]bool{"head": {}, "before": {}},
 	}
 	add := func(side, path string, n int, content string, changed bool) {
 		if path == "" || n < 1 {
@@ -170,6 +171,15 @@ func buildEvidenceContext(parsed *source.Diff, head, before *source.Snapshot) (e
 			c.changed[side][path][n] = true
 		}
 	}
+	show := func(side, path string, n int) {
+		if path == "" || n < 1 {
+			return
+		}
+		if c.shown[side][path] == nil {
+			c.shown[side][path] = map[int]bool{}
+		}
+		c.shown[side][path][n] = true
+	}
 	var numbered strings.Builder
 	for _, file := range parsed.Files {
 		fmt.Fprintf(&numbered, "\nFile before=%q head=%q status=%s\n", file.OldPath, file.NewPath, file.Status)
@@ -180,6 +190,8 @@ func buildEvidenceContext(parsed *source.Diff, head, before *source.Snapshot) (e
 			for _, line := range hunk.Lines {
 				add("before", file.OldPath, line.OldLine, line.Content, line.Kind == "delete")
 				add("head", file.NewPath, line.NewLine, line.Content, line.Kind == "add")
+				show("before", file.OldPath, line.OldLine)
+				show("head", file.NewPath, line.NewLine)
 				content, _ := json.Marshal(line.Content)
 				fmt.Fprintf(&numbered, "%s before:%d head:%d source_json=%s\n", line.Kind, line.OldLine, line.NewLine, content)
 			}

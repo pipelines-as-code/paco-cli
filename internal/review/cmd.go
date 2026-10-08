@@ -38,7 +38,7 @@ Web search, when available, is only for public library documentation and release
 versions and API names. Never include repository code, private identifiers, credentials or internal URLs in a web query.
 Prefer official documentation matching the project's declared version; newer releases alone do not prove a bug.
 Include source URLs in a finding when it relies on web documentation. Do not invent citations.
-Use tools only when necessary. You have at most 24 repository calls, 3 web searches and 8 model turns. The last turn has no tools:
+Use tools only when necessary. Repository calls, web searches and model turns are limited as stated below. The last turn has no tools:
 it must contain your final answer, so leave room for it.
 Your final response must be the requested review JSON object with no prose or markdown fences.`
 
@@ -201,7 +201,8 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	instructions := systemPrompt
 	if tools != nil || opts.WebSearch {
-		instructions = toolSystemPrompt
+		instructions = toolSystemPrompt + fmt.Sprintf("\nYou have at most %d repository calls, %d web searches and %d model turns.",
+			model.DefaultLimits.ToolCalls, model.DefaultLimits.WebSearches, model.DefaultLimits.Turns)
 	}
 	modelID := opts.Model
 	if modelID == "" {

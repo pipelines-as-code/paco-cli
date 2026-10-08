@@ -32,7 +32,7 @@ func budgetEvents(tools, searches int, reportedSearches int64, stop string) stri
 }
 
 func TestCompleteSharedBudgetExactCaps(t *testing.T) {
-	budget := NewBudget()
+	budget := legacyBudget()
 	tools := &testTools{}
 	n := 0
 	ft := &fakeTransport{respond: func(*http.Request) *http.Response {
@@ -86,7 +86,7 @@ func TestCompleteDiscoveryReservation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			budget := NewBudget()
+			budget := legacyBudget()
 			tools := &testTools{}
 			ft := &fakeTransport{respond: func(*http.Request) *http.Response {
 				return response(200, "text/event-stream", budgetEvents(tt.tools, 0, 0, "tool_use"))
@@ -104,7 +104,7 @@ func TestCompleteDiscoveryReservation(t *testing.T) {
 }
 
 func TestCompleteUnusedDiscoveryAllowanceTransfers(t *testing.T) {
-	budget := NewBudget()
+	budget := legacyBudget()
 	tools := &testTools{}
 	n := 0
 	ft := &fakeTransport{respond: func(*http.Request) *http.Response {
@@ -151,7 +151,7 @@ func TestCompleteProviderSearchAccounting(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			budget := NewBudget()
+			budget := legacyBudget()
 			tools := &testTools{}
 			ft := &fakeTransport{respond: func(*http.Request) *http.Response {
 				// Put a repository request first: overrun detection must precede execution.
@@ -176,7 +176,7 @@ func TestCompleteProviderSearchAccounting(t *testing.T) {
 }
 
 func TestCompleteCumulativeUsage(t *testing.T) {
-	budget := NewBudget()
+	budget := legacyBudget()
 	n := 0
 	ft := &fakeTransport{respond: func(*http.Request) *http.Response {
 		n++
@@ -218,7 +218,7 @@ func TestCompleteFailedUsagePersists(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			budget := NewBudget()
+			budget := legacyBudget()
 			n := 0
 			ft := &fakeTransport{respond: func(*http.Request) *http.Response {
 				n++
@@ -321,7 +321,7 @@ func TestCompleteBudgetCancellation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			budget := NewBudget()
+			budget := legacyBudget()
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			deadline, _ := ctx.Deadline()
@@ -360,7 +360,7 @@ func TestBudgetInvalidLimits(t *testing.T) {
 		assert.ErrorContains(t, err, "must not be negative")
 	}
 	for _, limits := range []Limits{{Turns: -1}, {ToolCalls: -1}, {WebSearches: -1}} {
-		_, err := NewBudget().begin(&limits)
+		_, err := legacyBudget().begin(&limits)
 		assert.ErrorContains(t, err, "must not be negative")
 	}
 }
@@ -376,7 +376,7 @@ func (t *cancellingTools) Call(ctx context.Context, name string, input json.RawM
 }
 
 func TestCompleteCancellationAfterUsage(t *testing.T) {
-	budget := NewBudget()
+	budget := legacyBudget()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	tools := &cancellingTools{cancel: cancel}
@@ -395,7 +395,7 @@ func TestCompleteCancellationAfterUsage(t *testing.T) {
 }
 
 func TestCompleteFailedRepositoryCallsConsumeBudget(t *testing.T) {
-	budget := NewBudget()
+	budget := legacyBudget()
 	tools := &testTools{err: errors.New("missing file")}
 	ft := &fakeTransport{respond: func(*http.Request) *http.Response {
 		return response(200, "text/event-stream", budgetEvents(13, 0, 0, "tool_use"))
@@ -425,7 +425,7 @@ func TestCompleteExplicitZeroLimits(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			budget := NewBudget()
+			budget := legacyBudget()
 			tools := &testTools{}
 			ft := &fakeTransport{respond: func(*http.Request) *http.Response {
 				if tt.name == "no web searches" {
@@ -447,7 +447,7 @@ func TestCompleteExplicitZeroLimits(t *testing.T) {
 }
 
 func TestCompleteSharedBudgetRejectsOverlap(t *testing.T) {
-	budget := NewBudget()
+	budget := legacyBudget()
 	var c Client
 	ft := &fakeTransport{respond: func(*http.Request) *http.Response {
 		assert.DeepEqual(t, budget.Snapshot().Used, Limits{Turns: 1})
@@ -460,4 +460,14 @@ func TestCompleteSharedBudgetRejectsOverlap(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Equal(t, len(ft.reqs), 1)
 	assert.Equal(t, budget.Snapshot().Usage.ModelRequests, int64(1))
+}
+
+// legacyBudget keeps the historical 8/24/3 allowance so the arithmetic in
+// these tests stays independent of DefaultLimits.
+func legacyBudget() *Budget {
+	b, err := NewBudgetWithLimits(Limits{Turns: 8, ToolCalls: 24, WebSearches: 3})
+	if err != nil {
+		panic(err)
+	}
+	return b
 }

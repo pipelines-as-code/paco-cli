@@ -147,17 +147,38 @@ func parseDiscovery(text string) (discovery, error) {
 // bare or in a JSON fence that may be left unclosed. The commentary must not
 // contain JSON delimiters, so there is never a choice among competing
 // objects; strict decoding then rejects anything after the object.
+// responseObject strips commentary around the review object. Models asked
+// for bare JSON often add prose, sometimes with brackets or code spans, and
+// an optional fence before the object. The first "{" from which one complete
+// JSON object parses, followed only by whitespace or a closing fence, wins.
+// Ambiguous or trailing content is left for decodeStrict to reject.
 func responseObject(text string) string {
 	text = strings.TrimSpace(text)
-	brace := strings.IndexByte(text, '{')
-	if brace <= 0 || strings.ContainsAny(text[:brace], "{}[]") {
-		return text
+	for brace := strings.IndexByte(text, '{'); brace >= 0; {
+		body := text[brace:]
+		if end, ok := objectEnd(body); ok {
+			rest := strings.TrimSpace(body[end:])
+			if rest == "" || rest == "```" {
+				return body[:end]
+			}
+		}
+		next := strings.IndexByte(text[brace+1:], '{')
+		if next < 0 {
+			break
+		}
+		brace += 1 + next
 	}
-	body := text[brace:]
-	if strings.HasSuffix(body, "\n```") {
-		body = strings.TrimSpace(strings.TrimSuffix(body, "```"))
+	return text
+}
+
+// objectEnd returns the length of the JSON object at the start of text.
+func objectEnd(text string) (int, bool) {
+	decoder := json.NewDecoder(strings.NewReader(text))
+	var raw json.RawMessage
+	if decoder.Decode(&raw) != nil || len(raw) == 0 || raw[0] != '{' {
+		return 0, false
 	}
-	return body
+	return int(decoder.InputOffset()), true
 }
 
 func parseVerdict(text string, candidates []Candidate, context evidenceContext) (verdict, error) {

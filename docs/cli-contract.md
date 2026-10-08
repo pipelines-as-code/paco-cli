@@ -136,7 +136,8 @@ Limits:
 - 32 MiB downloaded archive, 128 MiB expanded archive.
 - 16 MiB source text, 10,000 retained files, 32 MiB encoded snapshot.
 - 200 lines per read, 100 search/list results, under 16,000 bytes per tool result.
-- 24 repository tool calls, 3 web searches, 8 model turns.
+- 80 repository tool calls, 6 web searches, 24 model turns. These keep a
+  runaway loop finite; the review deadline and token limits bound cost.
 
 The last allowed turn has no tools: Paco sends `tool_choice: none` and
 asks Claude to return the review using only findings it confirmed. When
@@ -174,9 +175,9 @@ Verified-mode diff context and file/search results encode source lines as
 strings when citing evidence; local validation still compares exact source
 bytes. Single-pass source tools retain their existing text format.
 
-Both passes share the 900-second deadline and total allowance of eight turns,
-24 repository calls, and three web searches. Discovery gets at most four turns,
-twelve repository calls and two searches; verification can use the remainder.
+Both passes share the 900-second deadline and total allowance of 24 turns,
+80 repository calls, and six web searches. Discovery gets at most 16 turns,
+60 repository calls and four searches; verification can use the remainder.
 Each response retains the 16,384-output-token limit. Total token cost can
 increase even though call limits are shared. With no viable candidates,
 Paco skips the verifier.
@@ -188,9 +189,9 @@ run partial. Budget exhaustion, malformed verifier output, provider errors,
 or invalid verifier citations withhold all findings.
 
 Plain-output responses may put the final object in a `json` code fence, which
-may be left unclosed, or leave it bare. Commentary before it is allowed when it
-has no object or array delimiters. Multiple objects and trailing commentary
-are rejected.
+may be left unclosed, or leave it bare. Any commentary before it is allowed,
+including brackets and earlier draft objects: the last complete object is the
+answer. Trailing commentary after the object is rejected.
 The extracted object still has to pass every schema and evidence check.
 
 `.paco-status.json` records versioned provenance, usage, limitations, candidate

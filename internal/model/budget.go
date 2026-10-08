@@ -48,19 +48,36 @@ type BudgetSnapshot struct {
 	Usage     Usage
 }
 
-// Budget shares the 8-turn, 24-repository-call, 3-web-search allowance across
+// Budget shares one allowance (DefaultLimits unless set otherwise) across
 // sequential completions. Concurrent Complete calls sharing it are rejected.
 // Snapshots are safe during a completion. A Budget must not be copied after use.
 // The zero value is equivalent to NewBudget.
 type Budget struct {
 	mu     sync.Mutex
 	active bool
+	limits Limits
 	used   Limits
 	usage  Usage
 	tokens TokenLimits
 }
 
 func NewBudget() *Budget { return &Budget{} }
+
+// NewBudgetWithLimits bounds the allowance with explicit limits instead of
+// DefaultLimits.
+func NewBudgetWithLimits(limits Limits) (*Budget, error) {
+	if limits.Turns < 0 || limits.ToolCalls < 0 || limits.WebSearches < 0 {
+		return nil, errors.New("model limits must not be negative")
+	}
+	return &Budget{limits: limits}, nil
+}
+
+func (b *Budget) max() Limits {
+	if b.limits == (Limits{}) {
+		return DefaultLimits
+	}
+	return b.limits
+}
 
 func NewBudgetWithTokenLimits(limits TokenLimits) (*Budget, error) {
 	if limits.MaxInputTokens < 0 || limits.MaxOutputTokens < 0 {
@@ -70,10 +87,11 @@ func NewBudgetWithTokenLimits(limits TokenLimits) (*Budget, error) {
 }
 
 func (b *Budget) remaining() Limits {
+	limits := b.max()
 	return Limits{
-		Turns:       max(0, maxTurns-b.used.Turns),
-		ToolCalls:   max(0, maxToolCalls-b.used.ToolCalls),
-		WebSearches: max(0, maxWebSearches-b.used.WebSearches),
+		Turns:       max(0, limits.Turns-b.used.Turns),
+		ToolCalls:   max(0, limits.ToolCalls-b.used.ToolCalls),
+		WebSearches: max(0, limits.WebSearches-b.used.WebSearches),
 	}
 }
 
@@ -116,7 +134,7 @@ func (b *Budget) end() {
 func (b *Budget) turn(maxTokens int64) (int64, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.used.Turns >= maxTurns {
+	if b.used.Turns >= b.max().Turns {
 		return 0, &IncompleteError{Reason: "model turn limit reached"}
 	}
 	if b.tokens.MaxInputTokens > 0 && b.usage.InputTokens >= b.tokens.MaxInputTokens {
@@ -137,7 +155,7 @@ func (b *Budget) turn(maxTokens int64) (int64, error) {
 func (b *Budget) tool() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.used.ToolCalls >= maxToolCalls {
+	if b.used.ToolCalls >= b.max().ToolCalls {
 		return &IncompleteError{Reason: "repository tool call limit reached"}
 	}
 	b.used.ToolCalls++
@@ -154,7 +172,7 @@ func (b *Budget) record(usage Usage, searches int64) error {
 
 func (b *Budget) exceeded() error {
 	switch {
-	case b.used.WebSearches > maxWebSearches:
+	case b.used.WebSearches > b.max().WebSearches:
 		return &IncompleteError{Reason: "web search limit reached"}
 	case b.tokens.MaxInputTokens > 0 && b.usage.InputTokens > b.tokens.MaxInputTokens:
 		return &IncompleteError{Reason: "input token budget exceeded"}

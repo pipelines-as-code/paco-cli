@@ -56,7 +56,7 @@ containers running concurrently. Failed reviews were not retried.
 | Compared strategies | `single/low`, `single/high` |
 | Repository exploration / web search | Both enabled |
 | API-enforced structured output | Disabled; local output validation retained |
-| Single-pass allowance | 8 model turns, 24 repository calls, 3 web searches |
+| Single-pass allowance | 8 model turns, 24 repository calls, 3 web searches (defaults at the time; now 24/80/6) |
 | Adapter timeout | 780 seconds |
 | Diff size limit | 200,000 bytes |
 | Judge | Vertex AI `gemini-2.5-pro`, concurrency 2 |

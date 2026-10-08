@@ -338,7 +338,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		}
 		return response.Text, nil
 	}
-	text, err := request(discoverPrompt, contextPrompt, discoverySchema(), &model.Limits{Turns: 4, ToolCalls: 12, WebSearches: 2})
+	text, err := request(discoverPrompt, contextPrompt, discoverySchema(), &model.DiscoveryLimits)
 	if err != nil {
 		return fail(fmt.Errorf("discovery: %w", err))
 	}

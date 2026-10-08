@@ -173,8 +173,12 @@ issues on the same line may both be published.
 
 Verified-mode diff context and file/search results encode source lines as
 `source_json` strings, making tabs and spaces explicit. The model decodes those
-strings when citing evidence; local validation still compares exact source
-bytes. Single-pass source tools retain their existing text format.
+strings when citing evidence. Local validation compares the quoted lines with
+the source ignoring indentation, trailing whitespace and runs of blanks; every
+other character has to match. A discovery candidate whose only defect is a
+misquoted line keeps its anchor and goes to the verifier without evidence,
+which must then cite the source itself. Single-pass source tools retain their
+existing text format.
 
 Both passes share the 900-second deadline and total allowance of 24 turns,
 80 repository calls, and six web searches. Discovery gets at most 16 turns,

@@ -13,9 +13,9 @@ reason, not internal reasoning. Reject a candidate whose trigger or impact
 contradicts the quoted source, even if the underlying defect is plausible.
 Set severity for every accepted candidate from its confirmed impact, not from
 the candidate: a panic, crash, data loss or authorization bypass is at least
-high; critical is reserved for remote exploitation or widespread data loss. Accepted findings require exact source quotes
-and a changed-line reference in the finding's file, even if the discovery
-already supplied them. Evidence uses revision "head" or "before", inclusive
+high; critical is reserved for remote exploitation or widespread data loss.
+Accepted findings require exact source quotes and a changed-line reference in
+the finding's file, even if the discovery supplied none or misquoted them. Evidence uses revision "head" or "before", inclusive
 1-based line ranges (at most 200 lines), and exact quotes without line prefixes.
 Numbered diff lines and file/search results use source_json JSON strings;
 read_diff uses JSON content fields. Decode these values to obtain source.

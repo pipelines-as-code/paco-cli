@@ -355,9 +355,15 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	seen := map[string]bool{}
 	for _, candidate := range discovered.Candidates {
 		if err := input.evidence.validateCandidate(candidate); err != nil {
-			status.Rejected++
-			status.Decisions = append(status.Decisions, Disposition{candidate.ID, "invalid_evidence", err.Error()})
-			continue
+			if !errors.Is(err, errQuoteMismatch) {
+				status.Rejected++
+				status.Decisions = append(status.Decisions, Disposition{candidate.ID, "invalid_evidence", err.Error()})
+				continue
+			}
+			// The anchor is a real changed line; let the verifier re-cite the
+			// source instead of losing the candidate to a misquoted line.
+			fmt.Printf("Candidate %s: evidence discarded: %s\n", scrubber(backend.Secrets)(candidate.ID), err)
+			candidate.Evidence = []Evidence{}
 		}
 		key := candidate.Path + "\x00" + candidate.Side + "\x00" + candidate.Claim + "\x00" + candidate.Trigger + "\x00" + candidate.Impact
 		if seen[key] {

@@ -33,12 +33,16 @@ const (
 	cloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform"
 	tokenTimeout       = 30 * time.Second
 
-	// Limits of the tool loop in Complete. The review system prompt states them.
-	maxTurns           = 8
-	maxToolCalls       = 24
-	maxWebSearches     = 3
 	maxToolResultBytes = 16000
 )
+
+// DefaultLimits bounds the tool loop in Complete across one review. Time and
+// token limits are the real guard rails; these keep a runaway loop finite.
+var DefaultLimits = Limits{Turns: 24, ToolCalls: 80, WebSearches: 6}
+
+// DiscoveryLimits caps the first pass of a verified review so verification
+// keeps a share of DefaultLimits.
+var DiscoveryLimits = Limits{Turns: 16, ToolCalls: 60, WebSearches: 4}
 
 var validRegion = regexp.MustCompile(`^[a-z0-9-]+$`)
 
@@ -55,7 +59,7 @@ type Request struct {
 	// Budget nil creates a fresh default budget for this completion.
 	Budget *Budget
 	// Limits caps this completion without consuming unused allowances. For
-	// two passes, use {4, 12, 2} for discovery and nil for verification.
+	// two passes, use DiscoveryLimits for discovery and nil for verification.
 	Limits *Limits
 }
 

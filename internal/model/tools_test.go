@@ -89,7 +89,7 @@ func TestCompleteToolFailures(t *testing.T) {
 				return response(200, "text/event-stream", tt.stream)
 			}}
 			tools := &testTools{}
-			_, err := anthropicClient(t, ft).Complete(context.Background(), Request{Prompt: "p", Model: "m", MaxTokens: 100, Tools: tools})
+			_, err := anthropicClient(t, ft).Complete(context.Background(), Request{Prompt: "p", Model: "m", MaxTokens: 100, Tools: tools, Budget: legacyBudget()})
 			assert.ErrorContains(t, err, tt.want)
 			assert.Equal(t, tools.calls, tt.calls)
 		})
@@ -121,7 +121,7 @@ func TestCompleteFinalTurnAnswers(t *testing.T) {
 				return response(200, "text/event-stream", budgetEvents(tt.tools, 0, 0, "tool_use"))
 			}
 			result, err := anthropicClient(t, ft).Complete(context.Background(), Request{
-				Prompt: "p", Model: "m", MaxTokens: 100, Tools: tools, WebSearch: true, Limits: tt.limits,
+				Prompt: "p", Model: "m", MaxTokens: 100, Tools: tools, WebSearch: true, Limits: tt.limits, Budget: legacyBudget(),
 			})
 			assert.NilError(t, err)
 			assert.Equal(t, result.Text, `{"summary":"ok"}`)
@@ -164,7 +164,7 @@ func TestCompleteFinalTurnToolRequestFails(t *testing.T) {
 				return response(200, "text/event-stream", budgetEvents(2, 0, 0, "tool_use"))
 			}}
 			_, err := anthropicClient(t, ft).Complete(context.Background(), Request{
-				Prompt: "p", Model: "m", MaxTokens: 100, Tools: &testTools{}, Limits: tt.limits,
+				Prompt: "p", Model: "m", MaxTokens: 100, Tools: &testTools{}, Limits: tt.limits, Budget: legacyBudget(),
 			})
 			assert.ErrorContains(t, err, tt.want)
 		})
@@ -196,11 +196,11 @@ func TestCompleteWebSearch(t *testing.T) {
 	assert.Equal(t, len(ft.reqs), 2)
 	tool := ft.reqs[0].Body["tools"].([]any)[0].(map[string]any)
 	assert.Equal(t, tool["type"], "web_search_20250305")
-	assert.Equal(t, tool["max_uses"], float64(3))
+	assert.Equal(t, tool["max_uses"], float64(DefaultLimits.WebSearches))
 	_, hasCallers := tool["allowed_callers"]
 	assert.Assert(t, !hasCallers, "Vertex basic web search rejects allowed_callers")
 	tool = ft.reqs[1].Body["tools"].([]any)[0].(map[string]any)
-	assert.Equal(t, tool["max_uses"], float64(2))
+	assert.Equal(t, tool["max_uses"], float64(DefaultLimits.WebSearches-1))
 	assert.Equal(t, len(ft.reqs[1].Body["messages"].([]any)), 2)
 }
 

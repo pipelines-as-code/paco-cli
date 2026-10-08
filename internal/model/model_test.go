@@ -236,6 +236,13 @@ func TestCompleteFailures(t *testing.T) {
 			wantErr: "effort not supported",
 		},
 		{
+			name: "model not found",
+			respond: func(*http.Request) *http.Response {
+				return response(404, "application/json", `{"type":"error","error":{"type":"not_found_error","message":"model: m"}}`)
+			},
+			wantErr: `model "m" was not found`,
+		},
+		{
 			name: "redirect to http refused",
 			respond: func(r *http.Request) *http.Response {
 				resp := response(302, "text/plain", "")
@@ -264,6 +271,15 @@ func TestCompleteFailures(t *testing.T) {
 			assert.Equal(t, len(ft.reqs), 1, "no automatic retries")
 		})
 	}
+}
+
+func TestCompleteRejectsPrefixedModel(t *testing.T) {
+	ft := &fakeTransport{respond: func(*http.Request) *http.Response {
+		return response(200, "text/event-stream", sse(evStart))
+	}}
+	_, err := anthropicClient(t, ft).Complete(context.Background(), Request{Prompt: "p", Model: "google-vertex-anthropic/claude-sonnet-4-6@default", MaxTokens: 10})
+	assert.ErrorContains(t, err, "provider prefixes are not supported")
+	assert.Equal(t, len(ft.reqs), 0)
 }
 
 func TestCompleteCancelled(t *testing.T) {

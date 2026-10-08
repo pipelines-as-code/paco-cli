@@ -62,7 +62,7 @@ spec:
         {{ trigger_comment }}
     # Lets paco add an "eyes" reaction to the triggering comment.
     - name: comment_id
-      value: "{{ cel: has(body.comment) && has(body.comment.id) ? string(body.comment.id) : '' }}"
+      value: "{{ cel: has(body.comment) && has(body.comment.id) ? string(int(body.comment.id)) : '' }}"
     - name: git_auth_secret
       value: "{{git_auth_secret}}"
 

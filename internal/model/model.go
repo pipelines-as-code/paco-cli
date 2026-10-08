@@ -245,6 +245,9 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	if strings.Contains(req.Model, "/") {
+		return Result{}, fmt.Errorf("invalid model id %q: use a bare Claude model id such as %q, provider prefixes are not supported", req.Model, DefaultVertexModel)
+	}
 	budget := req.Budget
 	if budget == nil {
 		budget = NewBudget()
@@ -473,6 +476,10 @@ func (c *client) streamMessage(ctx context.Context, params anthropic.MessageNewP
 		}
 	}
 	if err := stream.Err(); err != nil {
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			return msg, fmt.Errorf("model %q was not found; check the model id and that it is enabled for this project and region: %w", params.Model, err)
+		}
 		return msg, err
 	}
 	if err := ctx.Err(); err != nil {

@@ -87,7 +87,7 @@ Runs the model review and writes normalized findings.
 | Flag | Required | Description |
 |---|---|---|
 | `--workspace` | no | Workspace directory (default `.`) |
-| `--model` | no | Claude model id, sent as is. Empty means `claude-opus-4-6@default` on Vertex AI and `claude-opus-4-6` on the Anthropic API |
+| `--model` | no | Bare Claude model id, sent as is; ids with a provider prefix such as `google-vertex-anthropic/` are rejected. Empty means `claude-opus-4-6@default` on Vertex AI and `claude-opus-4-6` on the Anthropic API |
 | `--reasoning-effort` | no | `low`, `medium`, `high`, `xhigh`, or `max`. Empty means `low`; `none` omits the API effort parameter. Values are trimmed and lowercased |
 | `--no-structured-output` | no | Omit the API response schema (default `true`) |
 | `--no-exploration` | no | Disable repository tools (default `false`) |

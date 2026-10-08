@@ -178,5 +178,52 @@
     "before": {"counter.go": "func increment(p *int) { *p = *p + 1 }", "caller.go": "mu.Lock()\nincrement(&count)\nmu.Unlock()\n// No other access to count or increment exists."},
     "head": {"counter.go": "func increment(p *int) { *p += 1 }", "caller.go": "mu.Lock()\nincrement(&count)\nmu.Unlock()\n// No other access to count or increment exists."},
     "issues": []
+  },
+  {
+    "name": "pac-owners-prefix-match", "split": "tuning",
+    "before": {"pkg/acl/owners.go": "package acl\n\nfunc UserInOwnerFile(owners []string, sender string) bool {\n\tfor _, owner := range owners {\n\t\tif owner == sender {\n\t\t\treturn true\n\t\t}\n\t}\n\treturn false\n}\n"},
+    "head": {"pkg/acl/owners.go": "package acl\n\nimport \"strings\"\n\nfunc UserInOwnerFile(owners []string, sender string) bool {\n\tfor _, owner := range owners {\n\t\t// entries may carry trailing annotations, e.g. \"alice # team lead\"\n\t\tif strings.HasPrefix(strings.TrimSpace(owner), sender) {\n\t\t\treturn true\n\t\t}\n\t}\n\treturn false\n}\n"},
+    "issues": [
+      {"id":"prefix-bypass","path":"pkg/acl/owners.go","line":8,"side":"head","claim":"A sender whose name is a prefix of a listed owner, or an empty sender, is authorised."}
+    ]
+  },
+  {
+    "name": "pac-shortsha-boundary", "split": "tuning",
+    "before": {"pkg/formatting/vcs.go": "package formatting\n\nvar shortShaLength = 7\n\n// ShortSHA returns a shortsha.\nfunc ShortSHA(sha string) string {\n\tif sha == \"\" {\n\t\treturn \"\"\n\t}\n\tif shortShaLength >= len(sha)+1 {\n\t\treturn sha\n\t}\n\treturn sha[0:shortShaLength]\n}\n"},
+    "head": {"pkg/formatting/vcs.go": "package formatting\n\nvar shortShaLength = 7\n\n// ShortSHA returns a shortsha, shorter values are returned as is.\nfunc ShortSHA(sha string) string {\n\tif len(sha) < shortShaLength-1 {\n\t\treturn sha\n\t}\n\treturn sha[0:shortShaLength]\n}\n"},
+    "issues": [
+      {"id":"six-char-panic","path":"pkg/formatting/vcs.go","line":7,"side":"head","claim":"A 6-character SHA passes the guard and sha[0:7] panics."}
+    ]
+  },
+  {
+    "name": "pac-k8s-name-truncation", "split": "tuning",
+    "before": {"pkg/formatting/k8names.go": "package formatting\n\nimport (\n\t\"regexp\"\n\t\"strings\"\n)\n\nfunc CleanKubernetesName(s string) string {\n\tregex := regexp.MustCompile(`[^a-z0-9\\.-]`)\n\ts = strings.TrimSpace(strings.ToLower(s))\n\treplaced := regex.ReplaceAllString(s, \"-\")\n\treturn replaced\n}\n","pkg/formatting/k8names_test.go": "package formatting\n\nimport \"testing\"\n\nfunc TestCleanKubernetesName(t *testing.T) {\n\tif got := CleanKubernetesName(\"Hello World\"); got != \"hello-world\" {\n\t\tt.Fatalf(\"got %q\", got)\n\t}\n}\n"},
+    "head": {"pkg/formatting/k8names.go": "package formatting\n\nimport (\n\t\"regexp\"\n\t\"strings\"\n)\n\n// kubernetesNameLastIndex is the last index kept when a name is cut down to\n// the 63 characters allowed for a label value.\nconst kubernetesNameLastIndex = 63\n\nfunc CleanKubernetesName(s string) string {\n\tregex := regexp.MustCompile(`[^a-z0-9\\.-]`)\n\ts = strings.TrimSpace(strings.ToLower(s))\n\treplaced := regex.ReplaceAllString(s, \"-\")\n\tif len(replaced) > kubernetesNameLastIndex {\n\t\treplaced = replaced[:kubernetesNameLastIndex+1]\n\t}\n\treturn replaced\n}\n","pkg/formatting/k8names_test.go": "package formatting\n\nimport (\n\t\"strings\"\n\t\"testing\"\n)\n\nfunc TestCleanKubernetesName(t *testing.T) {\n\tif got := CleanKubernetesName(\"Hello World\"); got != \"hello-world\" {\n\t\tt.Fatalf(\"got %q\", got)\n\t}\n}\n\nfunc TestCleanKubernetesNameLength(t *testing.T) {\n\ttruncate := func(s string) string {\n\t\tif len(s) > kubernetesNameLastIndex {\n\t\t\treturn s[:kubernetesNameLastIndex]\n\t\t}\n\t\treturn s\n\t}\n\tlong := strings.Repeat(\"a\", 100)\n\tif got := len(truncate(long)); got != 63 {\n\t\tt.Fatalf(\"expected 63 characters, got %d\", got)\n\t}\n}\n"},
+    "issues": [
+      {"id":"off-by-one","path":"pkg/formatting/k8names.go","line":17,"side":"head","claim":"The slice keeps 64 characters, one more than the 63 allowed for a label value."},
+      {"id":"test-masks-bug","path":"pkg/formatting/k8names_test.go","line":22,"side":"head","claim":"The length test checks a local truncate helper instead of CleanKubernetesName, so the off-by-one is not caught."}
+    ]
+  },
+  {
+    "name": "pac-label-case-mismatch", "split": "tuning",
+    "before": {"pkg/secrets/basic_auth.go": "package secrets\n\nfunc MakeBasicAuthSecretLabels(org, repo string) map[string]string {\n\treturn map[string]string{\n\t\t\"pipelinesascode.tekton.dev/url-org\":        formatting.CleanValueKubernetes(org),\n\t\t\"pipelinesascode.tekton.dev/url-repository\": formatting.CleanValueKubernetes(repo),\n\t}\n}\n","pkg/cmd/tknpac/resolve/basic_auth_secret.go": "package resolve\n\n// existingSecretSelector finds the git auth secret created for a repository.\nfunc existingSecretSelector(owner, repo string) string {\n\treturn fmt.Sprintf(\"%s=%s,%s=%s\",\n\t\t\"pipelinesascode.tekton.dev/url-org\", formatting.CleanValueKubernetes(owner),\n\t\t\"pipelinesascode.tekton.dev/url-repository\", formatting.CleanValueKubernetes(repo))\n}\n","pkg/formatting/k8values.go": "package formatting\n\n// CleanValueKubernetes replaces characters not allowed in a label value with\n// \"-\" and trims the result. It preserves case.\nfunc CleanValueKubernetes(s string) string {\n\treturn strings.Trim(labelRegex.ReplaceAllString(s, \"-\"), \"-\")\n}\n"},
+    "head": {"pkg/secrets/basic_auth.go": "package secrets\n\nimport \"strings\"\n\nfunc MakeBasicAuthSecretLabels(org, repo string) map[string]string {\n\treturn map[string]string{\n\t\t\"pipelinesascode.tekton.dev/url-org\":        labelValue(org),\n\t\t\"pipelinesascode.tekton.dev/url-repository\": labelValue(repo),\n\t}\n}\n\n// labelValue lowercases label values the same way the secret name is\n// lowercased, so a secret has a single consistent identity.\nfunc labelValue(s string) string {\n\treturn strings.ToLower(formatting.CleanValueKubernetes(s))\n}\n","pkg/cmd/tknpac/resolve/basic_auth_secret.go": "package resolve\n\n// existingSecretSelector finds the git auth secret created for a repository.\nfunc existingSecretSelector(owner, repo string) string {\n\treturn fmt.Sprintf(\"%s=%s,%s=%s\",\n\t\t\"pipelinesascode.tekton.dev/url-org\", formatting.CleanValueKubernetes(owner),\n\t\t\"pipelinesascode.tekton.dev/url-repository\", formatting.CleanValueKubernetes(repo))\n}\n","pkg/formatting/k8values.go": "package formatting\n\n// CleanValueKubernetes replaces characters not allowed in a label value with\n// \"-\" and trims the result. It preserves case.\nfunc CleanValueKubernetes(s string) string {\n\treturn strings.Trim(labelRegex.ReplaceAllString(s, \"-\"), \"-\")\n}\n"},
+    "issues": [
+      {"id":"lookup-mismatch","path":"pkg/secrets/basic_auth.go","line":7,"side":"head","claim":"Labels are lowercased but the selector in resolve still uses the original case, so secrets for repositories with uppercase names are not found."}
+    ]
+  },
+  {
+    "name": "pac-sort-nil-both-sides", "split": "tuning",
+    "before": {"pkg/sort/pipelinerun.go": "package sort\n\nfunc (prs byStartTime) Less(i, j int) bool {\n\tif prs[j].Status.StartTime == nil {\n\t\treturn false\n\t}\n\tif prs[i].Status.StartTime == nil {\n\t\treturn true\n\t}\n\t// If times are equal, sort by name descending\n\tif prs[j].Status.StartTime.Time.Equal(prs[i].Status.StartTime.Time) {\n\t\treturn prs[i].GetName() > prs[j].GetName()\n\t}\n\treturn prs[j].Status.StartTime.Before(prs[i].Status.StartTime)\n}\n"},
+    "head": {"pkg/sort/pipelinerun.go": "package sort\n\nfunc (prs byStartTime) Less(i, j int) bool {\n\t// PipelineRuns that have not started yet are listed first\n\tif prs[i].Status.StartTime == nil {\n\t\treturn true\n\t}\n\tif prs[j].Status.StartTime == nil {\n\t\treturn false\n\t}\n\t// If times are equal, sort by name descending\n\tif prs[j].Status.StartTime.Time.Equal(prs[i].Status.StartTime.Time) {\n\t\treturn prs[i].GetName() > prs[j].GetName()\n\t}\n\treturn prs[j].Status.StartTime.Before(prs[i].Status.StartTime)\n}\n"},
+    "issues": [
+      {"id":"less-not-strict","path":"pkg/sort/pipelinerun.go","line":6,"side":"head","claim":"When both StartTimes are nil Less(i,j) and Less(j,i) are both true, violating sort.Interface."}
+    ]
+  },
+  {
+    "name": "pac-duration-nil-guard-redundant", "split": "holdout",
+    "before": {"pkg/formatting/age.go": "package formatting\n\nfunc Duration(t1, t2 *metav1.Time) string {\n\tif t1.IsZero() || t2.IsZero() {\n\t\treturn nonAttributedStr\n\t}\n\treturn durafmt.ParseShort(t2.Sub(t1.Time)).String()\n}\n\nfunc PRDuration(startTime, completionTime *metav1.Time) string {\n\tif startTime == nil || completionTime == nil {\n\t\treturn nonAttributedStr\n\t}\n\treturn Duration(startTime, completionTime)\n}\n","vendor/k8s.io/apimachinery/pkg/apis/meta/v1/time.go": "package v1\n\n// IsZero returns true if the value is nil or time is zero.\nfunc (t *Time) IsZero() bool {\n\tif t == nil {\n\t\treturn true\n\t}\n\treturn t.Time.IsZero()\n}\n"},
+    "head": {"pkg/formatting/age.go": "package formatting\n\nfunc Duration(t1, t2 *metav1.Time) string {\n\tif t1.IsZero() || t2.IsZero() {\n\t\treturn nonAttributedStr\n\t}\n\treturn durafmt.ParseShort(t2.Sub(t1.Time)).String()\n}\n\nfunc PRDuration(startTime, completionTime *metav1.Time) string {\n\treturn Duration(startTime, completionTime)\n}\n","vendor/k8s.io/apimachinery/pkg/apis/meta/v1/time.go": "package v1\n\n// IsZero returns true if the value is nil or time is zero.\nfunc (t *Time) IsZero() bool {\n\tif t == nil {\n\t\treturn true\n\t}\n\treturn t.Time.IsZero()\n}\n"},
+    "issues": []
   }
 ]

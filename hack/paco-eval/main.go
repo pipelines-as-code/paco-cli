@@ -36,6 +36,7 @@ func run() error {
 	modelID := flag.String("model", "", "Model ID (backend default when empty)")
 	effort := flag.String("reasoning-effort", "low", "Reasoning effort")
 	noStructuredOutput := flag.Bool("no-structured-output", true, "Omit the API response schema; validate model output locally")
+	inventory := flag.Bool("inventory", true, "Give the reviewer the Go change inventory; set false for a baseline")
 	inputLimit := flag.Int64("max-input-tokens", 0, "Required cumulative input-token stop threshold (provider-reported, may overshoot one request)")
 	outputLimit := flag.Int64("max-output-tokens", 0, "Required cumulative output-token cap")
 	scorePath := flag.String("score", "", "Score a saved report without model calls")
@@ -126,7 +127,7 @@ func run() error {
 			if err != nil {
 				return err
 			}
-			result, err := runCase(c, n, *strategy, *modelID, *effort, *noStructuredOutput, budget)
+			result, err := runCase(c, n, *strategy, *modelID, *effort, *noStructuredOutput, *inventory, budget)
 			if err != nil {
 				return err
 			}
@@ -141,12 +142,13 @@ func run() error {
 	return nil
 }
 
-func runCase(c eval.Case, repetition int, strategy, modelID, effort string, noStructuredOutput bool, budget *model.Budget) (eval.Run, error) {
+func runCase(c eval.Case, repetition int, strategy, modelID, effort string, noStructuredOutput, inventory bool, budget *model.Budget) (eval.Run, error) {
 	result := eval.Run{
 		ID:   fmt.Sprintf("%s/%s/%d", c.Name, strategy, repetition+1),
 		Case: c.Name, Split: c.Split, Strategy: strategy, Model: modelID, Effort: effort, Expected: c.Issues,
 		PromptDigest:     review.PromptDigest(),
 		StructuredOutput: !noStructuredOutput,
+		Inventory:        inventory,
 	}
 	dir, err := os.MkdirTemp("", "paco-eval-")
 	if err != nil {
@@ -174,7 +176,7 @@ func runCase(c eval.Case, repetition int, strategy, modelID, effort string, noSt
 	err = review.Run(context.Background(), review.Options{
 		Workspace: dir, VerifyFindings: strategy == "verified", Budget: budget,
 		Model: modelID, ReasoningEffort: effort, NoStructuredOutput: noStructuredOutput,
-		WebSearch: false, Resolve: resolve,
+		WebSearch: false, NoInventory: !inventory, Resolve: resolve,
 	})
 	result.Milliseconds = time.Since(start).Milliseconds()
 	result.Usage = budget.Snapshot().Usage

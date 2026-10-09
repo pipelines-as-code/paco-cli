@@ -141,7 +141,7 @@ func TestBuildPrompt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := BuildPrompt(tt.mode, tt.diff, tt.feedback, tt.reviewRules, tt.toolchains)
+			result := BuildPrompt(tt.mode, tt.diff, tt.feedback, tt.reviewRules, "", tt.toolchains)
 
 			for _, s := range tt.wantContain {
 				assert.Assert(t, strings.Contains(result, s), "expected prompt to contain %q", s)
@@ -156,11 +156,12 @@ func TestBuildPrompt(t *testing.T) {
 func TestBuildPromptOrdering(t *testing.T) {
 	uniqueDiff := "UNIQUE_DIFF_CONTENT_12345"
 	toolchains := []toolchain.Version{{Language: "Go", Version: "1.27.1", Source: "go.mod"}}
-	result := BuildPrompt("review", uniqueDiff, "feedback text", "rules text", toolchains)
+	result := BuildPrompt("review", uniqueDiff, "feedback text", "rules text", "\"a.go\" func F modified\n", toolchains)
 
 	feedbackIdx := strings.Index(result, "BEGIN EXISTING FEEDBACK")
 	toolchainIdx := strings.Index(result, "- Go 1.27.1 (from go.mod)")
 	rulesIdx := strings.Index(result, "BEGIN TRUSTED REVIEW RULES")
+	inventoryIdx := strings.Index(result, "--- BEGIN CHANGE INVENTORY ---\n\"a.go\" func F modified\n--- END CHANGE INVENTORY ---")
 	diffIdx := strings.Index(result, uniqueDiff)
 
 	assert.Assert(t, feedbackIdx > 0, "feedback section should exist")
@@ -168,5 +169,6 @@ func TestBuildPromptOrdering(t *testing.T) {
 	assert.Assert(t, rulesIdx > 0, "rules section should exist")
 	assert.Assert(t, feedbackIdx < toolchainIdx, "feedback should come before toolchains")
 	assert.Assert(t, toolchainIdx < rulesIdx, "toolchains should come before rules")
-	assert.Assert(t, rulesIdx < diffIdx, "rules should come before diff")
+	assert.Assert(t, rulesIdx < inventoryIdx, "rules should come before the inventory")
+	assert.Assert(t, inventoryIdx < diffIdx, "inventory should come before diff")
 }

@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 
+	"github.com/pipelines-as-code/paco-cli/internal/source"
 	"github.com/pipelines-as-code/paco-cli/internal/toolchain"
 )
 
@@ -16,13 +17,18 @@ var promptModeReview string
 //go:embed prompts/mode_summary.txt
 var promptModeSummary string
 
+//go:embed prompts/inventory.txt
+var promptInventory string
+
 // PromptDigest identifies the prompt set used by a recorded evaluation.
 func PromptDigest() string {
 	return Digest([]byte(promptHeader + promptModeReview + promptModeSummary +
-		systemPrompt + toolSystemPrompt + discoverPrompt + verifyPrompt))
+		systemPrompt + toolSystemPrompt + discoverPrompt + verifyPrompt + promptInventory))
 }
 
-func BuildPrompt(mode, diff, feedback, reviewRules string, toolchains []toolchain.Version) string {
+// BuildPrompt assembles the single-pass prompt. inventory is the rendered
+// change inventory, or empty when none is available.
+func BuildPrompt(mode, diff, feedback, reviewRules, inventory string, toolchains []toolchain.Version) string {
 	prompt := promptHeader
 
 	if mode == "summary" {
@@ -30,10 +36,20 @@ func BuildPrompt(mode, diff, feedback, reviewRules string, toolchains []toolchai
 	} else {
 		prompt += "\n" + promptModeReview
 	}
-	return prompt + buildContext(diff, feedback, reviewRules, toolchains)
+	return prompt + buildContext(diff, feedback, reviewRules, inventory, toolchains)
 }
 
-func buildContext(diff, feedback, reviewRules string, toolchains []toolchain.Version) string {
+func renderInventory(d *source.Diff, head, before *source.Snapshot) string {
+	inv := source.BuildInventory(d, head, before)
+	if inv == nil {
+		return ""
+	}
+	fmt.Printf("Change inventory: %d entries, %d limitation(s), %d non-Go file(s) not inventoried\n",
+		len(inv.Entries), len(inv.Notes), inv.Skipped)
+	return inv.Render()
+}
+
+func buildContext(diff, feedback, reviewRules, inventory string, toolchains []toolchain.Version) string {
 	prompt := ""
 	if feedback != "" {
 		prompt += `
@@ -79,6 +95,10 @@ concrete bugs, security issues, and missed edge cases.
 --- BEGIN TRUSTED REVIEW RULES ---
 ` + reviewRules + `
 --- END TRUSTED REVIEW RULES ---`
+	}
+
+	if inventory != "" {
+		prompt += "\n\n" + promptInventory + "\n--- BEGIN CHANGE INVENTORY ---\n" + inventory + "--- END CHANGE INVENTORY ---"
 	}
 
 	prompt += `

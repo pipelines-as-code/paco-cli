@@ -17,17 +17,21 @@ import (
 )
 
 type Logger struct {
-	mu              sync.Mutex
-	out             io.Writer
-	secrets         []string
-	repositoryCalls int64
+	mu                 sync.Mutex
+	out                io.Writer
+	secrets            []string
+	repositoryCalls    int64
+	investigationCalls int64
+	updates            int
+	lastUpdate         time.Time
+	now                func() time.Time
 }
 
 func New(out io.Writer, secrets []string) *Logger {
 	if out == nil {
 		out = os.Stdout
 	}
-	return &Logger{out: out, secrets: append([]string(nil), secrets...)}
+	return &Logger{out: out, secrets: append([]string(nil), secrets...), now: time.Now}
 }
 
 func truncate(s string, limit int) string {
@@ -69,6 +73,38 @@ func (l *Logger) RepositoryCalls() int64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.repositoryCalls
+}
+
+func (l *Logger) InvestigationCalls() int64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.investigationCalls
+}
+
+// Report accepts public status text, independently of source tools or findings.
+func (l *Logger) Report(input json.RawMessage, turnAvailable bool) (string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.investigationCalls++
+	var fields map[string]json.RawMessage
+	var message string
+	if len(input) > 4096 || json.Unmarshal(input, &fields) != nil || len(fields) != 1 ||
+		json.Unmarshal(fields["message"], &message) != nil || strings.TrimSpace(message) == "" || utf8.RuneCountInString(message) > 240 {
+		return "", fmt.Errorf("report_progress requires one nonempty message of at most 240 characters")
+	}
+	for _, r := range message {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return "", fmt.Errorf("report_progress message must not contain control characters")
+		}
+	}
+	now := l.now()
+	if !turnAvailable || l.updates >= 12 || (!l.lastUpdate.IsZero() && now.Sub(l.lastUpdate) < 30*time.Second) {
+		return "Status update acknowledged; public updates are rate limited.", nil
+	}
+	l.updates++
+	l.lastUpdate = now
+	_, _ = fmt.Fprintln(l.out, "Investigation: "+l.field(strings.TrimSpace(message)))
+	return "Public status update recorded. Continue investigating and return the required final JSON.", nil
 }
 
 func (l *Logger) ToolStart(name string, input json.RawMessage) {

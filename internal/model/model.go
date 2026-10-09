@@ -59,6 +59,8 @@ type Request struct {
 	WebSearch bool
 	// Progress receives public status lines; nil logs to stdout with pattern redaction.
 	Progress *progress.Logger
+	// InvestigationUpdates enables the bounded report_progress status tool.
+	InvestigationUpdates bool
 	// Budget nil creates a fresh default budget for this completion.
 	Budget *Budget
 	// Limits caps this completion without consuming unused allowances. For
@@ -280,6 +282,9 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 	if req.System != "" {
 		params.System = []anthropic.TextBlockParam{{Text: req.System}}
 	}
+	if req.InvestigationUpdates {
+		params.System = append(params.System, anthropic.TextBlockParam{Text: InvestigationInstructions})
+	}
 	if req.Effort != "" {
 		params.OutputConfig.Effort = anthropic.OutputConfigEffort(req.Effort)
 	}
@@ -301,8 +306,16 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 			}})
 		}
 	}
+	if req.InvestigationUpdates {
+		allowed["report_progress"] = true
+		params.Tools = append(params.Tools, anthropic.ToolUnionParam{OfTool: &anthropic.ToolParam{
+			Name:        "report_progress",
+			Description: anthropic.String(ProgressToolDescription),
+			InputSchema: anthropic.ToolInputSchemaParam{Properties: map[string]any{"message": map[string]any{"type": "string", "maxLength": 240}}, Required: []string{"message"}, ExtraFields: map[string]any{"additionalProperties": false}},
+		}})
+	}
 	clientTools := params.Tools
-	hasTools := req.Tools != nil || req.WebSearch
+	hasTools := req.Tools != nil || req.WebSearch || req.InvestigationUpdates
 	var toolCalls, searches int64
 	toolsExhausted := false
 	for turn := range limits.Turns {
@@ -365,6 +378,7 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 			return Result{}, &IncompleteError{Reason: "unexpected server tool"}
 		}
 		var results []anthropic.ContentBlockParamUnion
+		progressReported := false
 		for _, block := range msg.Content {
 			switch block.Type {
 			case "server_tool_use":
@@ -410,6 +424,16 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 					return Result{}, err
 				}
 				toolCalls++
+				if block.Name == "report_progress" {
+					output, callErr := log.Report(block.Input, !progressReported)
+					progressReported = true
+					if callErr != nil {
+						output = callErr.Error()
+						log.Line("Investigation update rejected: %s", output)
+					}
+					results = append(results, anthropic.NewToolResultBlock(block.ID, output, callErr != nil))
+					continue
+				}
 				log.ToolStart(block.Name, block.Input)
 				started := time.Now()
 				output, callErr := req.Tools.Call(ctx, block.Name, block.Input)
@@ -506,3 +530,9 @@ func (c *client) streamMessage(ctx context.Context, params anthropic.MessageNewP
 	}
 	return msg, nil
 }
+
+// InvestigationInstructions is included only when public model updates are enabled.
+const InvestigationInstructions = "Use report_progress when beginning a meaningful check or changing investigation direction. Report only the concrete check underway, without conclusions, source excerpts, or internal reasoning. Keep updates brief and infrequent; do not emit one per file or tool call. Status updates and repository calls share the stated tool-call allowance. Final responses must still match the requested JSON schema."
+
+// ProgressToolDescription identifies the model-facing status tool in evaluation digests.
+const ProgressToolDescription = "Report a brief public status update describing the concrete check underway, such as checking that secret creation and lookup use the same normalization. These messages appear in terminal and CI logs. Do not include conclusions, findings, source excerpts, secrets, private identifiers, or internal reasoning. Use at most 240 characters without control characters. At most one update per model response, one every 30 seconds, and twelve per review are published. Calls consume the shared tool budget. Final responses must still match the requested JSON schema."

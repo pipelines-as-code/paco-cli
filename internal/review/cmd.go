@@ -46,15 +46,16 @@ Your final response must be the requested review JSON object with no prose or ma
 type Options struct {
 	Workspace string
 	// LogWriter overrides stdout for public status lines.
-	LogWriter          io.Writer
-	progress           *reviewProgress
-	Model              string
-	ReasoningEffort    string
-	TriggerComment     string
-	NoStructuredOutput bool
-	NoExploration      bool
-	WebSearch          bool
-	VerifyFindings     bool
+	LogWriter              io.Writer
+	progress               *reviewProgress
+	Model                  string
+	ReasoningEffort        string
+	TriggerComment         string
+	NoStructuredOutput     bool
+	NoExploration          bool
+	WebSearch              bool
+	VerifyFindings         bool
+	NoInvestigationUpdates bool
 	// NoInventory omits the Go change inventory so evaluations can run a baseline.
 	NoInventory bool
 	// Budget allows an evaluation run to impose token limits without changing CLI defaults.
@@ -88,11 +89,13 @@ func Command() *cobra.Command {
 }
 
 func newCommand(opts Options) *cobra.Command {
+	investigationUpdates := !opts.NoInvestigationUpdates
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Run AI review on a PR diff",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts.TriggerComment = os.Getenv("TRIGGER_COMMENT")
+			opts.NoInvestigationUpdates = !investigationUpdates
 			return Run(cmd.Context(), opts)
 		},
 	}
@@ -110,6 +113,8 @@ func newCommand(opts Options) *cobra.Command {
 		"Enable basic web search for public library documentation (requires --no-structured-output)")
 	cmd.Flags().BoolVar(&opts.VerifyFindings, "verify-findings", false,
 		"Independently verify evidence-backed findings before publishing")
+
+	cmd.Flags().BoolVar(&investigationUpdates, "investigation-updates", investigationUpdates, "Emit brief public investigation updates from the model (default true)")
 
 	return cmd
 }
@@ -230,7 +235,7 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 	}
 	prompt := BuildPrompt(mode, string(diffData), string(feedback), string(reviewRules), inventory, toolchain.Parse(toolchainData))
 	instructions := systemPrompt
-	if tools != nil || opts.WebSearch {
+	if tools != nil || opts.WebSearch || !opts.NoInvestigationUpdates {
 		instructions = toolSystemPrompt + fmt.Sprintf("\nYou have at most %d repository calls, %d web searches and %d model turns.",
 			model.DefaultLimits.ToolCalls, model.DefaultLimits.WebSearches, model.DefaultLimits.Turns)
 	}
@@ -253,16 +258,17 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 	startedAt := time.Now()
 
 	result, err := backend.Client.Complete(runCtx, model.Request{
-		System:    instructions,
-		Prompt:    prompt,
-		Model:     modelID,
-		Effort:    effort,
-		Schema:    schema,
-		MaxTokens: maxOutputTokens,
-		Tools:     tools,
-		WebSearch: opts.WebSearch,
-		Budget:    opts.Budget,
-		Progress:  p.log,
+		System:               instructions,
+		Prompt:               prompt,
+		Model:                modelID,
+		Effort:               effort,
+		Schema:               schema,
+		MaxTokens:            maxOutputTokens,
+		Tools:                tools,
+		WebSearch:            opts.WebSearch,
+		Budget:               opts.Budget,
+		Progress:             p.log,
+		InvestigationUpdates: !opts.NoInvestigationUpdates,
 	})
 
 	elapsed := time.Since(startedAt)

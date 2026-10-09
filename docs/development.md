@@ -134,6 +134,8 @@ its baseline; reports record the setting per run. Keep the two settings in
 separate reports. Synthetic cases render whole-file hunks, so every
 declaration appears changed; compare the inventory on real PR diffs.
 Input accounting is provider-reported and can overshoot by one request.
+`--investigation-updates=false` disables model status messages for a baseline;
+evaluation reports record whether they were enabled.
 Output allowances cap model requests. Completed results are saved between
 cases. No live runs belong in `make test` or CI.
 

@@ -62,3 +62,23 @@ func TestSingleProgressDoesNotDumpResponses(t *testing.T) {
 	assert.Assert(t, !strings.Contains(out.String(), fake.text))
 	assert.Assert(t, fake.got.Budget != nil && fake.got.Progress != nil)
 }
+
+func TestInvestigationFlag(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		var out bytes.Buffer
+		ws := setupWorkspaceWithDiff(t, "diff")
+		fake := &fakeClient{text: `{"summary":"ok","comments":[]}`}
+		cmd := newCommand(Options{Resolve: fakeResolve(fake), LogWriter: &out})
+		args := []string{"--workspace", ws, "--web-search=false"}
+		if disabled {
+			args = append(args, "--investigation-updates=false")
+		}
+		cmd.SetArgs(args)
+		assert.NilError(t, cmd.Execute())
+		assert.Equal(t, fake.got.InvestigationUpdates, !disabled)
+		if disabled {
+			assert.Equal(t, fake.got.System, systemPrompt)
+		}
+		assert.Assert(t, strings.Contains(out.String(), "Review completed:"))
+	}
+}

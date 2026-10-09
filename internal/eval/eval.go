@@ -35,23 +35,24 @@ type Case struct {
 }
 
 type Run struct {
-	ID               string                     `json:"id"`
-	Case             string                     `json:"case"`
-	Split            string                     `json:"split"`
-	Strategy         string                     `json:"strategy"`
-	Model            string                     `json:"model"`
-	Effort           string                     `json:"effort"`
-	InputDigest      string                     `json:"input_digest"`
-	PromptDigest     string                     `json:"prompt_digest"`
-	StructuredOutput bool                       `json:"structured_output"`
-	Inventory        bool                       `json:"inventory"`
-	Milliseconds     int64                      `json:"milliseconds"`
-	Usage            model.Usage                `json:"usage"`
-	Failed           bool                       `json:"failed"`
-	Error            string                     `json:"error,omitempty"`
-	Review           review.Review              `json:"review"`
-	Status           *review.VerificationStatus `json:"status,omitempty"`
-	Expected         []Issue                    `json:"expected"`
+	ID                   string                     `json:"id"`
+	Case                 string                     `json:"case"`
+	Split                string                     `json:"split"`
+	Strategy             string                     `json:"strategy"`
+	Model                string                     `json:"model"`
+	Effort               string                     `json:"effort"`
+	InputDigest          string                     `json:"input_digest"`
+	PromptDigest         string                     `json:"prompt_digest"`
+	StructuredOutput     bool                       `json:"structured_output"`
+	InvestigationUpdates bool                       `json:"investigation_updates"`
+	Inventory            bool                       `json:"inventory"`
+	Milliseconds         int64                      `json:"milliseconds"`
+	Usage                model.Usage                `json:"usage"`
+	Failed               bool                       `json:"failed"`
+	Error                string                     `json:"error,omitempty"`
+	Review               review.Review              `json:"review"`
+	Status               *review.VerificationStatus `json:"status,omitempty"`
+	Expected             []Issue                    `json:"expected"`
 }
 
 type Report struct {

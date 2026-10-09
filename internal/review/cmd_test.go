@@ -405,11 +405,12 @@ func TestRunModelRequest(t *testing.T) {
 			fc := &fakeClient{text: `{"summary":"ok","comments":[]}`}
 
 			err := Run(context.Background(), Options{
-				Workspace:          ws,
-				Model:              tt.model,
-				ReasoningEffort:    tt.effort,
-				Resolve:            fakeResolve(fc),
-				NoStructuredOutput: tt.noStructuredOutput,
+				Workspace:              ws,
+				Model:                  tt.model,
+				ReasoningEffort:        tt.effort,
+				Resolve:                fakeResolve(fc),
+				NoStructuredOutput:     tt.noStructuredOutput,
+				NoInvestigationUpdates: true,
 			})
 			assert.NilError(t, err)
 			assert.Equal(t, fc.calls, 1)

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -142,8 +143,9 @@ func TestVerifiedReviewHTTP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := verifiedWorkspace(t)
 			resolve, requests := reviewServer(t, []string{jsonText(t, discovered), tt.response})
+			var logs bytes.Buffer
 			assert.NilError(t, Run(context.Background(), Options{
-				Workspace: ws, VerifyFindings: true, Resolve: resolve,
+				Workspace: ws, VerifyFindings: true, Resolve: resolve, LogWriter: &logs,
 			}))
 			result := readReview(t, ws)
 			assert.Assert(t, result.Verified)
@@ -169,6 +171,18 @@ func TestVerifiedReviewHTTP(t *testing.T) {
 			assert.Equal(t, status.Usage.ModelRequests, int64(2))
 			assert.Equal(t, status.Usage.OutputTokens, int64(20))
 			assert.Equal(t, status.State == "partial", tt.partial)
+			text := logs.String()
+			assert.Assert(t, strings.Index(text, "Discovery started") < strings.Index(text, "Discovery completed:"), text)
+			assert.Assert(t, strings.Index(text, "Discovery completed:") < strings.Index(text, "Verification started"), text)
+			assert.Assert(t, strings.Contains(text, "a.go:1 [before]"), text)
+			if tt.failed {
+				assert.Assert(t, strings.Contains(text, "Review failed: no findings ready"), text)
+			} else {
+				assert.Assert(t, strings.Contains(text, "coverage "+status.State), text)
+				assert.Assert(t, strings.Contains(text, "Verification completed:"), text)
+			}
+			assert.Assert(t, strings.Contains(text, "Reported tokens: input 40, output 20"), text)
+			assert.Assert(t, !strings.Contains(text, "test-model-key"), text)
 		})
 	}
 }

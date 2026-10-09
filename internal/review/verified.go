@@ -211,10 +211,14 @@ func buildEvidenceContext(parsed *source.Diff, head, before *source.Snapshot) (e
 }
 
 func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, backend *model.Resolved, effort string) error {
+	p := opts.progress
 	status := &VerificationStatus{Version: 1, State: "failed", Limitations: []string{}, Decisions: []Disposition{}}
 	fail := func(cause error) error {
 		status.FailureReason = scrubber(backend.Secrets)(cause.Error())
-		fmt.Printf("Verified review failed: %s\n", status.FailureReason)
+		p.log.Line("Verified review failed: %s", status.FailureReason)
+		p.state = "failed"
+		p.accepted, p.rejected, p.duplicates = 0, status.Rejected, status.Duplicates
+		p.limitations = append([]string(nil), status.Limitations...)
 		output := Review{Verified: status.HeadSHA != "", Summary: "Paco could not complete verification. No findings were published.", Comments: []Comment{}}
 		data, err := json.Marshal(output)
 		if err != nil {
@@ -340,7 +344,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 			System: toolSystemPrompt + phaseLimits + "\n" + instructions,
 			Prompt: "Return JSON matching this schema:\n" + string(shape) + "\n" + prompt,
 			Model:  modelID, Effort: effort, Schema: schema, MaxTokens: maxOutputTokens,
-			Tools: availableTools, WebSearch: opts.WebSearch, Budget: budget, Limits: limits,
+			Tools: availableTools, WebSearch: opts.WebSearch, Budget: budget, Limits: limits, Progress: p.log,
 		})
 		status.Usage = budget.Snapshot().Usage
 		if err != nil {
@@ -354,14 +358,19 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		}
 		return response.Text, nil
 	}
+	p.phaseStarted("Discovery")
 	text, err := request(discoverPrompt, contextPrompt, discoverySchema(), &model.DiscoveryLimits)
 	if err != nil {
 		return fail(fmt.Errorf("discovery: %w", err))
 	}
 	discovered, err := parseDiscovery(text)
 	if err != nil {
-		fmt.Println(responseShape("Discovery", text))
+		p.log.Line("%s", responseShape("Discovery", text))
 		return fail(fmt.Errorf("discovery: %w", err))
+	}
+	p.log.Line("Discovery completed: %d candidates", len(discovered.Candidates))
+	for _, candidate := range discovered.Candidates {
+		p.log.Line("Candidate %s: %s - %s:%d [%s]", candidate.ID, candidate.Claim, candidate.Path, candidate.Line, candidate.Side)
 	}
 	status.Candidates = len(discovered.Candidates)
 	if discovered.Overflow {
@@ -378,7 +387,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 			}
 			// The anchor is a real changed line; let the verifier re-cite the
 			// source instead of losing the candidate to a misquoted line.
-			fmt.Printf("Candidate %s: evidence discarded: %s\n", scrubber(backend.Secrets)(candidate.ID), err)
+			p.log.Line("Candidate %s: evidence discarded - %s:%d [%s]: %s", candidate.ID, candidate.Path, candidate.Line, candidate.Side, err.Error())
 			candidate.Evidence = []Evidence{}
 		}
 		key := candidate.Path + "\x00" + candidate.Side + "\x00" + candidate.Claim + "\x00" + candidate.Trigger + "\x00" + candidate.Impact
@@ -393,15 +402,21 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if status.Rejected > 0 {
 		status.Limitations = append(status.Limitations, fmt.Sprintf("%d candidates lacked valid source evidence.", status.Rejected))
 	}
-	fmt.Printf("Discovery: %d candidates, %d rejected, %d duplicates\n", status.Candidates, status.Rejected, status.Duplicates)
+	p.log.Line("Discovery validation: %d rejected, %d duplicates", status.Rejected, status.Duplicates)
 	for _, d := range status.Decisions {
-		fmt.Println(dispositionLine(d, backend.Secrets))
+		for _, c := range discovered.Candidates {
+			if c.ID == d.ID {
+				p.decision(c, d, "")
+				break
+			}
+		}
 	}
 	result := Review{
 		Verified: true, Summary: discovered.Summary, ReviewScore: discovered.ReviewScore,
 		SecuritySensitive: discovered.SecuritySensitive, Comments: []Comment{}, SummaryFindings: []Comment{},
 	}
 	if len(candidates) > 0 {
+		p.phaseStarted("Verification")
 		data, err := json.Marshal(candidates)
 		if err != nil {
 			return fail(err)
@@ -412,7 +427,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		}
 		verified, err := parseVerdict(text, candidates, input.evidence)
 		if err != nil {
-			fmt.Println(responseShape("Verification", text))
+			p.log.Line("%s", responseShape("Verification", text))
 			return fail(fmt.Errorf("verification: %w", err))
 		}
 		result.Summary = verified.Summary
@@ -424,7 +439,8 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		for _, decision := range verified.Decisions {
 			d := Disposition{decision.ID, decision.Outcome, decision.Reason}
 			status.Decisions = append(status.Decisions, d)
-			fmt.Println(dispositionLine(d, backend.Secrets))
+			c := byID[decision.ID]
+			p.decision(c, d, decision.Severity)
 			switch decision.Outcome {
 			case "accept":
 				c := byID[decision.ID]
@@ -472,14 +488,16 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if err := WriteStatus(ws, status); err != nil {
 		return err
 	}
-	return ws.Write(artifact.FileReview, data)
-}
-
-// dispositionLine formats one candidate decision for the step log. Candidate
-// IDs and reasons are model output, so they are scrubbed and kept to one line.
-func dispositionLine(d Disposition, secrets []string) string {
-	reason := strings.Join(strings.Fields(d.Reason), " ")
-	return "Candidate " + scrubber(secrets)(fmt.Sprintf("%s: %s: %s", d.ID, d.Outcome, reason))
+	if err := ws.Write(artifact.FileReview, data); err != nil {
+		return err
+	}
+	p.state = status.State
+	p.accepted, p.rejected, p.duplicates = status.Accepted, status.Rejected, status.Duplicates
+	p.limitations = append([]string(nil), status.Limitations...)
+	if len(candidates) > 0 {
+		p.log.Line("Verification completed: %d accepted, %d rejected, %d duplicates", status.Accepted, status.Rejected, status.Duplicates)
+	}
+	return nil
 }
 
 // responseShape describes a rejected model response without its content.
@@ -544,11 +562,6 @@ func (t *coverageTools) Call(ctx context.Context, name string, input json.RawMes
 	output, err := t.Toolset.Call(ctx, name, input)
 	if err != nil || strings.Contains(output, "[Result truncated") {
 		t.incomplete = true
-		detail := "result truncated"
-		if err != nil {
-			detail = err.Error()
-		}
-		fmt.Printf("Model tool %s incomplete: %s\n", name, detail)
 	}
 	return output, err
 }

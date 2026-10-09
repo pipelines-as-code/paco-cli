@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
+	"github.com/pipelines-as-code/paco-cli/internal/progress"
 	"github.com/pipelines-as-code/paco-cli/internal/review"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
 	"github.com/spf13/cobra"
@@ -45,6 +47,7 @@ type Options struct {
 	Repo      string
 	PRNumber  int
 	Workspace string
+	LogWriter io.Writer
 	// GitHub is the API client; nil builds one from the environment.
 	GitHub *ghclient.Client
 }
@@ -91,6 +94,7 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	log := progress.New(opts.LogWriter, []string{gh.Token()})
 	if ws.Exists(artifact.FileSecurityBlock) {
 		return postSticky(ctx, gh, repo, pr, withheldBody)
 	}
@@ -98,11 +102,11 @@ func Run(ctx context.Context, opts Options) error {
 	// Belt-and-braces rescan with this step's own GitHub token
 	reviewData, _ := ws.Read(artifact.FileReview)
 	if reason := security.ScanSecrets(string(reviewData), gh.Token()); reason != "" {
-		fmt.Printf("Security filter tripped: %s; withholding review.\n", reason)
+		log.Line("Security filter tripped: %s; withholding review", reason)
 		return postSticky(ctx, gh, repo, pr, withheldBody)
 	}
 	if rev.Verified {
-		return postVerified(ctx, ws, gh, repo, pr, rev)
+		return postVerified(ctx, ws, gh, repo, pr, rev, log)
 	}
 	if ws.Exists(review.FileStatus) {
 		return errors.New("verification status exists but review output is not verified; rerun review")
@@ -149,14 +153,18 @@ func Run(ctx context.Context, opts Options) error {
 		err := gh.CreateReview(ctx, repo, pr, headSHA,
 			"Paco inline comments -- see the Paco Review summary comment for the overview.", inlineComments)
 		if err != nil {
-			fmt.Printf("Inline review failed (scrubbed):\n%s\n", security.Scrub(err.Error(), gh.Token()))
+			log.Line("Inline publication failed: %s", err.Error())
 			noteBody := stickyBody + "\n\n> [!NOTE]\n> Some inline comments could not be posted (a line number may fall outside the diff)."
 			_ = postSticky(ctx, gh, repo, pr, noteBody)
 		} else {
-			fmt.Printf("Posted %d new inline comment(s)\n", len(inlineComments))
+			log.Line("Publication completed: %d inline findings posted", len(inlineComments))
 		}
 	} else {
-		fmt.Println("No new inline comments to post")
+		if failed {
+			log.Line("Publication completed: failed review summary posted; no findings published")
+		} else {
+			log.Line("Publication completed: summary posted; no new inline findings")
+		}
 	}
 
 	return nil
@@ -252,14 +260,14 @@ func postSticky(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, pr
 			if err := gh.UpdateComment(ctx, repo, c.ID, body); err != nil {
 				return fmt.Errorf("updating the Paco summary comment: %w", err)
 			}
-			fmt.Println("Updated Paco summary comment")
+			progress.New(nil, []string{gh.Token()}).Line("Publication: summary comment updated")
 			return nil
 		}
 	}
 	if err := gh.CreateComment(ctx, repo, pr, body); err != nil {
 		return fmt.Errorf("creating the Paco summary comment: %w", err)
 	}
-	fmt.Println("Created Paco summary comment")
+	progress.New(nil, []string{gh.Token()}).Line("Publication: summary comment created")
 	return nil
 }
 
@@ -268,7 +276,7 @@ func applyLabels(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, p
 	target := labelFor(rating)
 	warn := func(action string, err error) {
 		if err != nil {
-			fmt.Printf("Warning: could not %s: %v\n", action, err)
+			progress.New(nil, []string{gh.Token()}).Line("Warning: could not %s: %s", action, err.Error())
 		}
 	}
 

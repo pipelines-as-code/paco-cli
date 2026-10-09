@@ -1,6 +1,7 @@
 package post
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -52,7 +53,8 @@ func TestPostVerified(t *testing.T) {
 	happy(f)
 	f.JSON("GET /repos/owner/repo/pulls/1", `{"head":{"sha":"abc123"},"base":{"ref":"main","sha":"def456"}}`)
 	ws := workspace(t, verifiedArtifacts(t))
-	opts := Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: gh}
+	var logs bytes.Buffer
+	opts := Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: gh, LogWriter: &logs}
 	assert.NilError(t, Run(context.Background(), opts))
 	calls := f.Calls("POST " + reviewsPath)
 	assert.Equal(t, len(calls), 1)
@@ -69,6 +71,7 @@ func TestPostVerified(t *testing.T) {
 	status, err := review.ReadStatus(&artifact.Workspace{Dir: ws}, data)
 	assert.NilError(t, err)
 	assert.Equal(t, status.Posted, 2)
+	assert.Assert(t, strings.Contains(logs.String(), "2 inline findings published; 1 summary-only findings; coverage complete"), logs.String())
 	assert.NilError(t, Run(context.Background(), opts))
 	assert.Equal(t, len(f.Calls("POST "+reviewsPath)), 1, "reposting one workspace must not duplicate inline findings")
 }

@@ -93,6 +93,7 @@ Runs the model review and writes normalized findings.
 | `--no-exploration` | no | Disable repository tools (default `false`) |
 | `--web-search` | no | Allow web search for public library docs (default `true`) |
 | `--verify-findings` | no | Discover and independently verify evidence-backed findings (default `false`) |
+| `--investigation-updates` | no | Emit brief public model status updates (default `true`); set `false` for a baseline |
 
 The effort is sent as `output_config.effort`. Supported values depend
 on the model (Opus 4.6 accepts `max` but not `xhigh`); an unsupported
@@ -116,6 +117,14 @@ stop, refusal, truncated stream, or the 900-second timeout produces a
 failure summary. The timeout includes Vertex token acquisition, and each
 OAuth request has its own 30-second timeout. Paco never retries
 automatically.
+
+Review logs show phases, tool arguments and bounded result summaries, candidate
+decisions, coverage, elapsed time and provider-reported usage. Findings are ready
+after `review`; `post` confirms publication. Heartbeats run every 30 seconds.
+Model investigation updates describe checks underway and consume the shared tool
+budget. They are limited to 240 characters, one per model response, at least
+30 seconds apart, and twelve per review. Logs redact credentials and escape
+control characters; source bodies and raw model responses are not logged.
 
 ### Repository Exploration
 

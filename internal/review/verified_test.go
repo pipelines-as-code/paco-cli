@@ -261,8 +261,9 @@ func TestVerifiedNoExploration(t *testing.T) {
 		Workspace: ws, VerifyFindings: true, NoExploration: true, Resolve: resolve,
 	}))
 	assert.Equal(t, len(*requests), 1)
-	_, hasTools := (*requests)[0]["tools"]
-	assert.Assert(t, !hasTools)
+	tools := (*requests)[0]["tools"].([]any)
+	assert.Equal(t, len(tools), 1)
+	assert.Equal(t, tools[0].(map[string]any)["name"], "report_progress")
 	data, err := os.ReadFile(filepath.Join(ws, artifact.FileReview))
 	assert.NilError(t, err)
 	status, err := ReadStatus(&artifact.Workspace{Dir: ws}, data)

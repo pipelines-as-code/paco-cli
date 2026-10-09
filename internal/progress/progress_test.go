@@ -65,3 +65,40 @@ func TestWebLogging(t *testing.T) {
 	assert.Assert(t, strings.Contains(out.String(), "Web search failed: unavailable"))
 	assert.Assert(t, !strings.Contains(out.String(), "never print") && !strings.Contains(out.String(), "example.com"))
 }
+
+func TestInvestigationLimits(t *testing.T) {
+	var out bytes.Buffer
+	log := New(&out, nil)
+	now := time.Unix(100, 0)
+	log.now = func() time.Time { return now }
+	input := json.RawMessage(`{"message":"Checking creation and lookup normalization"}`)
+	_, err := log.Report(input, true)
+	assert.NilError(t, err)
+	_, err = log.Report(input, true)
+	assert.NilError(t, err)
+	assert.Equal(t, strings.Count(out.String(), "Investigation:"), 1)
+	now = now.Add(30 * time.Second)
+	_, err = log.Report(input, false)
+	assert.NilError(t, err)
+	assert.Equal(t, strings.Count(out.String(), "Investigation:"), 1)
+	for range 20 {
+		now = now.Add(30 * time.Second)
+		_, err = log.Report(input, true)
+		assert.NilError(t, err)
+	}
+	assert.Equal(t, strings.Count(out.String(), "Investigation:"), 12)
+	assert.Equal(t, log.InvestigationCalls(), int64(23))
+}
+
+func TestInvestigationValidation(t *testing.T) {
+	for _, input := range []string{`{`, `null`, `{}`, `{"message":null}`, `{"message":" "}`, `{"message":"ok","source":"body"}`, `{"message":"bad\nline"}`, `{"message":"bad\u001b"}`, `{"message":"bad\u202e"}`, `{"message":"` + strings.Repeat("x", 241) + `"}`} {
+		t.Run(input, func(t *testing.T) {
+			var out bytes.Buffer
+			log := New(&out, nil)
+			_, err := log.Report(json.RawMessage(input), true)
+			assert.Assert(t, err != nil)
+			assert.Equal(t, out.Len(), 0)
+			assert.Equal(t, log.InvestigationCalls(), int64(1))
+		})
+	}
+}

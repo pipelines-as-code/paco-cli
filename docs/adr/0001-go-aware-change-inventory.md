@@ -2,7 +2,12 @@
 
 ## Status
 
-Proposed. This record does not approve implementation or change review defaults.
+Accepted and implemented. The inventory is always on for both single-pass
+and verified review. Single-pass review loads only the head snapshot, so it
+cannot list deleted declarations; deleted lines are attributed to a head
+declaration only when the head lines on both sides fall inside it. Its effect
+on review quality has not been measured yet; `hack/paco-eval --inventory=false`
+runs the baseline for the comparison described under Evaluation.
 
 ## Context
 

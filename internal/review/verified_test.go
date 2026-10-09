@@ -256,6 +256,23 @@ func TestVerifiedNoExploration(t *testing.T) {
 	assert.Equal(t, status.State, "partial")
 }
 
+func TestVerifiedInventory(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		ws := verifiedWorkspace(t)
+		resolve, requests := reviewServer(t, []string{jsonText(t, discovery{
+			Summary: "Removes a guard.", ReviewScore: ReviewScore{2, "Small."}, Candidates: []Candidate{},
+		})})
+		assert.NilError(t, Run(context.Background(), Options{
+			Workspace: ws, VerifyFindings: true, NoInventory: disabled, Resolve: resolve,
+		}))
+		assert.Equal(t, len(*requests), 1)
+		messages := jsonText(t, (*requests)[0]["messages"])
+		assert.Equal(t, strings.Contains(messages, "BEGIN CHANGE INVENTORY"), !disabled)
+		// The fixture source is not valid Go, so the inventory must say so.
+		assert.Equal(t, strings.Contains(messages, "failed to parse"), !disabled)
+	}
+}
+
 func TestVerifiedFileModeCoverage(t *testing.T) {
 	const modeDiff = "diff --git a/script.sh b/script.sh\nold mode 100755\nnew mode 100644\n"
 	tests := []struct {

@@ -44,6 +44,7 @@ type Run struct {
 	InputDigest      string                     `json:"input_digest"`
 	PromptDigest     string                     `json:"prompt_digest"`
 	StructuredOutput bool                       `json:"structured_output"`
+	Inventory        bool                       `json:"inventory"`
 	Milliseconds     int64                      `json:"milliseconds"`
 	Usage            model.Usage                `json:"usage"`
 	Failed           bool                       `json:"failed"`

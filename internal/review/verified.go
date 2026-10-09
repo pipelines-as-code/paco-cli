@@ -302,7 +302,11 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if err != nil {
 		return fail(err)
 	}
-	contextPrompt := buildContext(input.numbered, string(feedback), string(rules), toolchain.Parse(versions))
+	inventory := ""
+	if !opts.NoInventory {
+		inventory = renderInventory(input.tools.Diff, input.tools.Head, input.tools.Before)
+	}
+	contextPrompt := buildContext(input.numbered, string(feedback), string(rules), inventory, toolchain.Parse(versions))
 	contextPrompt = security.Scrub(contextPrompt, backend.Secrets...)
 	budget := opts.Budget
 	if budget == nil {

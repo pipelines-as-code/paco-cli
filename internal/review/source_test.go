@@ -48,6 +48,32 @@ func TestRunSourceTools(t *testing.T) {
 	}
 }
 
+func TestRunSingleInventory(t *testing.T) {
+	const singleDiff = "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -3 +3 @@\n-func F() int { return 1 }\n+func F() int { return 2 }\n"
+	tests := []struct {
+		name string
+		opts Options
+		want bool
+	}{
+		{name: "inventory by default", want: true},
+		{name: "evaluation baseline", opts: Options{NoInventory: true}},
+		{name: "no exploration has no snapshot", opts: Options{NoExploration: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := setupWorkspaceWithDiff(t, singleDiff)
+			assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileHeadSHA), []byte("sha\n"), 0o600))
+			assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileSource),
+				[]byte(`{"commit":"sha","files":{"a.go":"package a\n\nfunc F() int { return 2 }\n"}}`), 0o600))
+			fc := &fakeClient{text: `{"summary":"ok","comments":[]}`}
+			opts := tt.opts
+			opts.Workspace, opts.Resolve = ws, fakeResolve(fc)
+			assert.NilError(t, Run(context.Background(), opts))
+			assert.Equal(t, strings.Contains(fc.got.Prompt, "--- BEGIN CHANGE INVENTORY ---\n\"a.go\" func F changed head:3-3 hunks:1\n"), tt.want, fc.got.Prompt)
+		})
+	}
+}
+
 func TestSourceCannotFollowExternalSymlink(t *testing.T) {
 	ws := &artifact.Workspace{Dir: t.TempDir()}
 	target := filepath.Join(t.TempDir(), "outside.json")

@@ -51,6 +51,8 @@ type Options struct {
 	NoExploration      bool
 	WebSearch          bool
 	VerifyFindings     bool
+	// NoInventory omits the Go change inventory so evaluations can run a baseline.
+	NoInventory bool
 	// Budget allows an evaluation run to impose token limits without changing CLI defaults.
 	Budget *model.Budget
 	// Timeout overrides the review deadline; zero keeps the 900-second default.
@@ -183,10 +185,9 @@ func Run(ctx context.Context, opts Options) error {
 	feedback, _ := ws.Read(artifact.FileExistingFeedback)
 	reviewRules, _ := ws.Read(artifact.FileReviewRules)
 	toolchainData, _ := ws.Read(artifact.FileToolchains)
-	prompt := BuildPrompt(mode, string(diffData), string(feedback), string(reviewRules), toolchain.Parse(toolchainData))
-
 	scrub := scrubber(backend.Secrets)
 	var tools model.Toolset
+	inventory := ""
 	if !opts.NoExploration {
 		snapshot, err := loadSource(ws, backend.Secrets)
 		if err != nil {
@@ -195,10 +196,20 @@ func Run(ctx context.Context, opts Options) error {
 		if snapshot != nil {
 			tools = snapshot
 			fmt.Printf("Repository exploration available: %d files at %s\n", len(snapshot.Files), snapshot.Commit)
+			if !opts.NoInventory {
+				// Single-pass loads only the head snapshot, so the inventory
+				// cannot map deleted lines to before-side declarations.
+				if parsed, err := diff.Parse(security.Scrub(string(diffData), backend.Secrets...)); err == nil {
+					inventory = renderInventory(parsed, snapshot, nil)
+				} else {
+					fmt.Printf("Change inventory unavailable: %s\n", scrub(err.Error()))
+				}
+			}
 		} else {
 			fmt.Println("Repository exploration unavailable: no source snapshot; reviewing supplied diff only")
 		}
 	}
+	prompt := BuildPrompt(mode, string(diffData), string(feedback), string(reviewRules), inventory, toolchain.Parse(toolchainData))
 	instructions := systemPrompt
 	if tools != nil || opts.WebSearch {
 		instructions = toolSystemPrompt + fmt.Sprintf("\nYou have at most %d repository calls, %d web searches and %d model turns.",

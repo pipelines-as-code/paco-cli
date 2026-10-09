@@ -125,6 +125,14 @@ take 1-based line ranges. Searches are literal and case-sensitive, with
 an optional path substring filter. A corrupt or mismatched snapshot
 fails the review; a missing one falls back to a diff-only review.
 
+When a snapshot is available and the diff touches `.go` files, the prompt
+also carries a change inventory: each changed line is mapped to its
+enclosing top-level declaration using Go's standard parser, with line
+ranges and hunk numbers. Verified mode maps both revisions; single-pass
+has only the head snapshot, so deleted declarations are not listed there.
+Parse failures, missing files and truncation are stated in the inventory.
+The diff stays authoritative for anchors.
+
 `diff` builds the snapshot from a tarball of the PR head, keeping
 regular UTF-8 text files in memory without extracting them to disk. It
 skips symlinks, hardlinks, binary files, files over 512 KiB, common

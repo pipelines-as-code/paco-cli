@@ -76,7 +76,8 @@ tekton/               shared Pipeline and example PipelineRun for users
 ## Architecture decision records
 
 These proposals describe possible review improvements and their evaluation
-requirements. They do not change current behavior or approve implementation.
+requirements. Unless a record's status says it is implemented, it does not
+change current behavior or approve implementation.
 
 - [0001: Go-aware change inventory](adr/0001-go-aware-change-inventory.md)
 - [0002: Discovery coverage and a targeted follow-up pass](adr/0002-discovery-coverage-and-follow-up.md)
@@ -126,6 +127,12 @@ go run ./hack/paco-eval --live \
 
 Run `--strategy single` separately with the same cases/model/effort for the
 baseline. The numbers above are example allowances, not a cost estimate.
+
+`--inventory=false` omits the Go change inventory
+([ADR 0001](adr/0001-go-aware-change-inventory.md)) so a run can serve as
+its baseline; reports record the setting per run. Keep the two settings in
+separate reports. Synthetic cases render whole-file hunks, so every
+declaration appears changed; compare the inventory on real PR diffs.
 Input accounting is provider-reported and can overshoot by one request.
 Output allowances cap model requests. Completed results are saved between
 cases. No live runs belong in `make test` or CI.

@@ -27,6 +27,7 @@ func TestRequiresExplicitLivePermission(t *testing.T) {
 			os.Args = append([]string{"paco-eval", "--fixtures", "../../internal/review/testdata/eval/cases.json"}, tt.args...)
 			assert.ErrorContains(t, run(), "live runs require")
 			assert.Equal(t, flag.Lookup("no-structured-output").Value.String(), "true")
+			assert.Equal(t, flag.Lookup("inventory").Value.String(), "true")
 		})
 	}
 }
@@ -36,10 +37,11 @@ func TestRunCaseRecordsCredentialFailure(t *testing.T) {
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
 	cases, err := eval.Load("../../internal/review/testdata/eval/cases.json")
 	assert.NilError(t, err)
-	result, err := runCase(cases[0], 0, "verified", "", "low", true, model.NewBudget())
+	result, err := runCase(cases[0], 0, "verified", "", "low", true, false, model.NewBudget())
 	assert.NilError(t, err)
 	assert.Assert(t, result.Failed)
 	assert.Assert(t, !result.StructuredOutput)
+	assert.Assert(t, !result.Inventory)
 	assert.Equal(t, result.Usage.ModelRequests, int64(0))
 	assert.Equal(t, len(result.PromptDigest), 64)
 	assert.Equal(t, len(result.InputDigest), 64)

@@ -344,7 +344,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 			System: toolSystemPrompt + phaseLimits + "\n" + instructions,
 			Prompt: "Return JSON matching this schema:\n" + string(shape) + "\n" + prompt,
 			Model:  modelID, Effort: effort, Schema: schema, MaxTokens: maxOutputTokens,
-			Tools: availableTools, WebSearch: opts.WebSearch, Budget: budget, Limits: limits, Progress: p.log,
+			Tools: availableTools, WebSearch: opts.WebSearch, Budget: budget, Limits: limits, Progress: p.log, InvestigationUpdates: !opts.NoInvestigationUpdates,
 		})
 		status.Usage = budget.Snapshot().Usage
 		if err != nil {

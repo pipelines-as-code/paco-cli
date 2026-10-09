@@ -21,15 +21,15 @@ type reviewProgress struct {
 
 func (p *reviewProgress) phaseStarted(phase string) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.phase = phase
-	p.mu.Unlock()
 	p.log.Line("%s started", phase)
 }
 
 func (p *reviewProgress) logUsage() {
 	b := p.budget.Snapshot()
-	p.log.Line("Elapsed: %s; repository calls: %d; tool calls: %d/%d; model turns: %d/%d; web searches: %d/%d",
-		time.Since(p.started).Round(time.Second).String(), p.log.RepositoryCalls(), b.Used.ToolCalls, b.Used.ToolCalls+b.Remaining.ToolCalls,
+	p.log.Line("Elapsed: %s; repository calls: %d; investigation calls: %d; tool calls: %d/%d; model turns: %d/%d; web searches: %d/%d",
+		time.Since(p.started).Round(time.Second).String(), p.log.RepositoryCalls(), p.log.InvestigationCalls(), b.Used.ToolCalls, b.Used.ToolCalls+b.Remaining.ToolCalls,
 		b.Used.Turns, b.Used.Turns+b.Remaining.Turns, b.Used.WebSearches, b.Used.WebSearches+b.Remaining.WebSearches)
 	p.log.Line("Reported tokens: input %d, output %d; cache creation %d, cache read %d (included in input)", b.Usage.InputTokens, b.Usage.OutputTokens, b.Usage.CacheCreationInputTokens, b.Usage.CacheReadInputTokens)
 }
@@ -46,10 +46,9 @@ func (p *reviewProgress) heartbeat(interval time.Duration) func() {
 				return
 			case <-ticker.C:
 				p.mu.Lock()
-				phase := p.phase
-				p.mu.Unlock()
-				p.log.Line("%s still running", phase)
+				p.log.Line("%s still running", p.phase)
 				p.logUsage()
+				p.mu.Unlock()
 			}
 		}
 	}()

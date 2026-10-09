@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 
+	"github.com/pipelines-as-code/paco-cli/internal/model"
 	"github.com/pipelines-as-code/paco-cli/internal/source"
 	"github.com/pipelines-as-code/paco-cli/internal/toolchain"
 )
@@ -23,7 +24,7 @@ var promptInventory string
 // PromptDigest identifies the prompt set used by a recorded evaluation.
 func PromptDigest() string {
 	return Digest([]byte(promptHeader + promptModeReview + promptModeSummary +
-		systemPrompt + toolSystemPrompt + discoverPrompt + verifyPrompt + promptInventory))
+		systemPrompt + toolSystemPrompt + discoverPrompt + verifyPrompt + promptInventory + model.InvestigationInstructions + model.ProgressToolDescription))
 }
 
 // BuildPrompt assembles the single-pass prompt. inventory is the rendered

@@ -18,6 +18,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/vertex"
 	"github.com/pipelines-as-code/paco-cli/internal/httpsafe"
+	"github.com/pipelines-as-code/paco-cli/internal/progress"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -56,6 +57,8 @@ type Request struct {
 	MaxTokens int64
 	Tools     Toolset
 	WebSearch bool
+	// Progress receives public status lines; nil logs to stdout with pattern redaction.
+	Progress *progress.Logger
 	// Budget nil creates a fresh default budget for this completion.
 	Budget *Budget
 	// Limits caps this completion without consuming unused allowances. For
@@ -260,6 +263,10 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 	if err != nil {
 		return Result{}, err
 	}
+	log := req.Progress
+	if log == nil {
+		log = progress.New(nil, nil)
+	}
 	var usage Usage
 	defer func() {
 		result.Usage = usage
@@ -364,8 +371,9 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 				if !req.WebSearch || block.Name != "web_search" {
 					return Result{}, &IncompleteError{Reason: "unexpected server tool"}
 				}
-				fmt.Println("Model tool: web_search")
+				log.WebStart(block.Input)
 			case "web_search_tool_result":
+				log.WebEnd(block.RawJSON())
 				var result struct {
 					Content struct {
 						Type      string `json:"type"`
@@ -402,11 +410,14 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 					return Result{}, err
 				}
 				toolCalls++
-				fmt.Printf("Model tool: %s\n", block.Name)
+				log.ToolStart(block.Name, block.Input)
+				started := time.Now()
 				output, callErr := req.Tools.Call(ctx, block.Name, block.Input)
 				if ctx.Err() != nil {
+					log.ToolEnd(block.Name, "", ctx.Err(), time.Since(started))
 					return Result{}, ctx.Err()
 				}
+				log.ToolEnd(block.Name, output, callErr, time.Since(started))
 				if callErr != nil {
 					output = callErr.Error()
 				}

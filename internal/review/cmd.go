@@ -13,6 +13,7 @@ import (
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
 	"github.com/pipelines-as-code/paco-cli/internal/diff"
 	"github.com/pipelines-as-code/paco-cli/internal/model"
+	"github.com/pipelines-as-code/paco-cli/internal/progress"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
 	"github.com/pipelines-as-code/paco-cli/internal/source"
 	"github.com/pipelines-as-code/paco-cli/internal/toolchain"
@@ -43,7 +44,10 @@ it must contain your final answer, so leave room for it.
 Your final response must be the requested review JSON object with no prose or markdown fences.`
 
 type Options struct {
-	Workspace          string
+	Workspace string
+	// LogWriter overrides stdout for public status lines.
+	LogWriter          io.Writer
+	progress           *reviewProgress
 	Model              string
 	ReasoningEffort    string
 	TriggerComment     string
@@ -118,14 +122,21 @@ func scrubber(secrets []string) func(string) string {
 	}
 }
 
-func Run(ctx context.Context, opts Options) error {
+func Run(ctx context.Context, opts Options) (runErr error) {
+	if opts.Budget == nil {
+		opts.Budget = model.NewBudget()
+	}
+	p := &reviewProgress{log: progress.New(opts.LogWriter, nil), budget: opts.Budget, started: time.Now(), state: "failed", phase: "Preparation"}
+	opts.progress = p
+	stopHeartbeat := func() {}
+	defer func() { stopHeartbeat(); p.finish(runErr) }()
 	ws := &artifact.Workspace{Dir: opts.Workspace}
 	if err := clearReviewOutput(ws); err != nil {
 		return err
 	}
 
 	writeFail := func(msg string) error {
-		fmt.Fprintln(os.Stderr, msg)
+		p.log.Line("Review failure: %s", msg)
 		review := Review{Summary: msg, Comments: []Comment{}}
 		data, _ := json.Marshal(review)
 		if err := ws.Write(artifact.FileReview, data); err != nil {
@@ -168,13 +179,15 @@ func Run(ctx context.Context, opts Options) error {
 		return writeFail("Paco: " + security.Redact(err.Error()) + ".")
 	}
 
+	p.log = progress.New(opts.LogWriter, backend.Secrets)
+	stopHeartbeat = p.heartbeat(30 * time.Second)
 	mode := "review"
 	firstLine := strings.SplitN(opts.TriggerComment, "\n", 2)[0]
 	fields := strings.Fields(firstLine)
 	if len(fields) >= 2 && strings.ToLower(fields[1]) == "summary" {
 		mode = "summary"
 	}
-	fmt.Printf("Running Paco in %s mode\n", mode)
+	p.log.Line("Running Paco in %s mode", mode)
 	if err := ws.Write(artifact.FileMode, []byte(mode+"\n")); err != nil {
 		return err
 	}
@@ -187,6 +200,7 @@ func Run(ctx context.Context, opts Options) error {
 	toolchainData, _ := ws.Read(artifact.FileToolchains)
 	scrub := scrubber(backend.Secrets)
 	var tools model.Toolset
+	var coverage *coverageTools
 	inventory := ""
 	if !opts.NoExploration {
 		snapshot, err := loadSource(ws, backend.Secrets)
@@ -194,19 +208,24 @@ func Run(ctx context.Context, opts Options) error {
 			return writeFail("Paco: " + scrub(err.Error()) + ".")
 		}
 		if snapshot != nil {
-			tools = snapshot
-			fmt.Printf("Repository exploration available: %d files at %s\n", len(snapshot.Files), snapshot.Commit)
+			coverage = &coverageTools{Toolset: snapshot}
+			tools = coverage
+			if snapshot.Excluded > 0 {
+				p.limitations = append(p.limitations, fmt.Sprintf("%d files excluded from the head snapshot.", snapshot.Excluded))
+			}
+			p.log.Line("Repository exploration available: %d files at %s", len(snapshot.Files), snapshot.Commit)
 			if !opts.NoInventory {
 				// Single-pass loads only the head snapshot, so the inventory
 				// cannot map deleted lines to before-side declarations.
 				if parsed, err := diff.Parse(security.Scrub(string(diffData), backend.Secrets...)); err == nil {
 					inventory = renderInventory(parsed, snapshot, nil)
 				} else {
-					fmt.Printf("Change inventory unavailable: %s\n", scrub(err.Error()))
+					p.log.Line("Change inventory unavailable: %s", err.Error())
 				}
 			}
 		} else {
-			fmt.Println("Repository exploration unavailable: no source snapshot; reviewing supplied diff only")
+			p.log.Line("Repository exploration unavailable: no source snapshot; reviewing supplied diff only")
+			p.limitations = append(p.limitations, "Full source unavailable; only supplied diff context was reviewed.")
 		}
 	}
 	prompt := BuildPrompt(mode, string(diffData), string(feedback), string(reviewRules), inventory, toolchain.Parse(toolchainData))
@@ -228,23 +247,10 @@ func Run(ctx context.Context, opts Options) error {
 	if effortLabel == "" {
 		effortLabel = "omitted"
 	}
-	fmt.Printf("Starting model review (backend=%s, model=%s, effort=%s, structured-output=%t)...\n",
+	p.log.Line("Starting model review (backend=%s, model=%s, effort=%s, structured-output=%t)",
 		backend.Backend, modelID, effortLabel, schema != nil)
+	p.phaseStarted("Review")
 	startedAt := time.Now()
-
-	stopHeartbeat := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				fmt.Printf("Paco review still running (%ds elapsed)\n", int(time.Since(startedAt).Seconds()))
-			case <-stopHeartbeat:
-				return
-			}
-		}
-	}()
 
 	result, err := backend.Client.Complete(runCtx, model.Request{
 		System:    instructions,
@@ -256,13 +262,13 @@ func Run(ctx context.Context, opts Options) error {
 		Tools:     tools,
 		WebSearch: opts.WebSearch,
 		Budget:    opts.Budget,
+		Progress:  p.log,
 	})
 
-	close(stopHeartbeat)
 	elapsed := time.Since(startedAt)
 
 	if err != nil {
-		fmt.Printf("--- model error (scrubbed) ---\n%s\n", scrub(err.Error()))
+		p.log.Line("Model review failed: %s", err.Error())
 		var incomplete *model.IncompleteError
 		switch {
 		case errors.As(err, &incomplete):
@@ -273,11 +279,11 @@ func Run(ctx context.Context, opts Options) error {
 			return writeFail("Paco: the model backend returned an error; check the PipelineRun logs.")
 		}
 	}
-	fmt.Printf("Model completed in %ds; validating review output\n", int(elapsed.Seconds()))
+	p.log.Line("Model completed in %ds; validating review output", int(elapsed.Seconds()))
 
 	rawOutput := result.Text
 	if reason := security.ScanSecrets(rawOutput, backend.Secrets...); reason != "" {
-		fmt.Printf("Security filter tripped: %s; withholding review.\n", reason)
+		p.log.Line("Security filter tripped: %s; withholding review", reason)
 		if err := ws.Write(artifact.FileSecurityBlock, []byte(reason+"\n")); err != nil {
 			return err
 		}
@@ -287,7 +293,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	review := ExtractReview(rawOutput)
 	if review == nil {
-		fmt.Printf("--- unparsable model output (scrubbed) ---\n%s\n", scrub(rawOutput))
+		p.log.Line("%s", responseShape("Review", rawOutput))
 		return writeFail("Paco: the model returned output that could not be parsed as a review.")
 	}
 
@@ -309,7 +315,17 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	fmt.Printf("Paco generated %d normalized finding(s) in %s mode\n", len(normalized.Comments), mode)
+	if opts.NoExploration {
+		p.limitations = append(p.limitations, "Repository exploration disabled.")
+	}
+	if coverage != nil && coverage.incomplete {
+		p.limitations = append(p.limitations, "Some repository reads failed or returned truncated results.")
+	}
+	p.accepted = len(normalized.Comments)
+	p.state = "complete"
+	if len(p.limitations) > 0 {
+		p.state = "partial"
+	}
 	return nil
 }
 

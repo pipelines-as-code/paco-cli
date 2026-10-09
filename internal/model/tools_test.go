@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pipelines-as-code/paco-cli/internal/progress"
 	"gotest.tools/v3/assert"
 )
 
@@ -55,9 +57,12 @@ func TestCompleteRepositoryToolLoop(t *testing.T) {
 				return response(200, "text/event-stream", sse(evStart, evBlockStart, evDelta, evBlockStop, evMessageDelta("end_turn"), evStop))
 			}}
 			c := anthropicClient(t, ft)
-			result, err := c.Complete(context.Background(), Request{Prompt: "review", Model: "m", MaxTokens: 100, Tools: tools})
+			var logs bytes.Buffer
+			result, err := c.Complete(context.Background(), Request{Prompt: "review", Model: "m", MaxTokens: 100, Tools: tools, Progress: progress.New(&logs, []string{"file not found"})})
 			assert.NilError(t, err)
 			assert.Equal(t, tools.calls, 1)
+			assert.Assert(t, strings.Contains(logs.String(), "Reading a.go"), logs.String())
+			assert.Assert(t, !strings.Contains(logs.String(), "package test") && !strings.Contains(logs.String(), "file not found"), logs.String())
 			assert.Equal(t, result.Text, `{"summary":"ok"}`)
 			assert.Equal(t, len(ft.reqs), 2)
 			first := ft.reqs[0].Body["tools"].([]any)[0].(map[string]any)

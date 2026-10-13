@@ -161,6 +161,12 @@ func TestInventoryCases(t *testing.T) {
 			want: []string{`Limitation: "bad.go": head source failed to parse near line 3`},
 		},
 		{
+			name: "parse failure line ignores line directives",
+			diff: "diff --git a/gen.go b/gen.go\nnew file mode 100644\n--- /dev/null\n+++ b/gen.go\n@@ -0,0 +1,7 @@\n+package p\n+\n+//line gen.y:1\n+func F() {\n+}\n+\n+func G( {\n",
+			head: map[string]string{"gen.go": "package p\n\n//line gen.y:1\nfunc F() {\n}\n\nfunc G( {\n"},
+			want: []string{`Limitation: "gen.go": head source failed to parse near line 7`},
+		},
+		{
 			name: "missing snapshot file is reported",
 			diff: "diff --git a/gone.go b/gone.go\n--- a/gone.go\n+++ b/gone.go\n@@ -1 +1 @@\n-package a\n+package b\n",
 			head: map[string]string{},

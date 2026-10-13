@@ -240,7 +240,10 @@ func (inv *Inventory) parseSide(display, revision, path string, expected bool, s
 		line := 0
 		var list scanner.ErrorList
 		if errors.As(err, &list) && len(list) > 0 {
-			line = list[0].Pos.Line
+			// Count from the offset: Pos.Line is adjusted by //line directives.
+			if off := list[0].Pos.Offset; off >= 0 && off <= len(content) {
+				line = strings.Count(content[:off], "\n") + 1
+			}
 		}
 		inv.Notes = append(inv.Notes, fmt.Sprintf("%q: %s source failed to parse near line %d; entries may be incomplete", display, revision, line))
 	}

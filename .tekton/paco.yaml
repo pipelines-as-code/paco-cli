@@ -16,10 +16,6 @@ metadata:
 spec:
   pipelineRef:
     name: paco
-  timeouts:
-    pipeline: 30m
-    tasks: 25m
-    finally: 5m
   taskRunTemplate:
     podTemplate:
       securityContext:

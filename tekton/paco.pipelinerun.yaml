@@ -45,12 +45,6 @@ metadata:
 spec:
   pipelineRef:
     name: paco
-  # The review gives up after 15 minutes. Keep time for the finally task,
-  # which marks the review as failed on the pull request after a timeout.
-  timeouts:
-    pipeline: 30m
-    tasks: 25m
-    finally: 5m
   params:
     # Filled in by Pipelines-as-Code; leave these as they are.
     - name: repo_owner
@@ -62,7 +56,7 @@ spec:
     - name: trigger_comment
       value: |
         {{ trigger_comment }}
-    # Lets paco show its progress as a reaction on the triggering comment.
+    # Lets paco add an "eyes" reaction to the triggering comment.
     - name: comment_id
       value: "{{ cel: has(body.comment) && has(body.comment.id) ? string(int(body.comment.id)) : '' }}"
     - name: git_auth_secret
@@ -107,13 +101,6 @@ spec:
     #   value: "paco-anthropic-api-key"
     # - name: anthropic_secret_key
     #   value: "api-key"
-    #
-    # Show the review state (reviewing, clean, findings, failed) as a label.
-    # Do not list these labels in an on-label trigger.
-    # - name: status_labels
-    #   value: "true"
-    # - name: status_label_prefix
-    #   value: "paco/"
   workspaces:
     - name: source
       emptyDir: {}

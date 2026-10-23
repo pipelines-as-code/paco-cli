@@ -193,20 +193,33 @@ func TestResolveOwnership(t *testing.T) {
 	}
 }
 
-func TestConcurrentFirstRunsEachPublishToTheirOwnComment(t *testing.T) {
-	_, p, c := setup(t)
-	// Both runs saw no comment, so both created one.
-	ids := map[string]int64{}
-	for _, run := range []string{"run-a", "run-b"} {
-		ids[run] = p.AddComment(bot, Marker+"\n"+Header{Run: run, Comment: "pr", State: Fetching}.String()+"\n")
-	}
-	for _, run := range []string{"run-a", "run-b"} {
-		r, _ := reporter(t, c, run, "")
-		st, proceed, err := r.Resolve(context.Background(), Claim{RunID: run, Claimed: true, Prior: "none"})
-		assert.NilError(t, err)
-		assert.Assert(t, proceed, run)
-		assert.Equal(t, st.ID, ids[run])
-	}
+func TestConcurrentFirstRunsKeepOneComment(t *testing.T) {
+	f, p, c := setup(t)
+	// Both runs saw no comment; run-b created its comment first.
+	first := Marker + "\n" + Header{Run: "run-b", Comment: "pr", State: Fetching}.String() + "\n"
+	p.AddComment(bot, first)
+	mine := p.AddComment(bot, Marker+"\n"+Header{Run: "run-a", Comment: "pr", State: Fetching}.String()+"\n")
+	a, _ := reporter(t, c, "run-a", "")
+
+	claim := a.dedupe(context.Background(), Claim{RunID: "run-a", Prior: "none"}, mine)
+	assert.Equal(t, claim.Claimed, false)
+	assert.Equal(t, len(p.Comments), 1)
+	assert.Equal(t, p.Comments[0].Body, first)
+
+	// run-b finishes clean; the cancelled run-a then reports its failure.
+	b, _ := reporter(t, c, "run-b", "")
+	st, proceed, err := b.Resolve(context.Background(), Claim{RunID: "run-b", Claimed: true, Prior: "none"})
+	assert.NilError(t, err)
+	assert.Assert(t, proceed)
+	_, err = b.Publish(context.Background(), st, Marker+"\nclean review", Clean)
+	assert.NilError(t, err)
+	b.Update(context.Background(), Clean)
+	writes := len(f.Writes())
+
+	a.Fail(context.Background())
+	assert.Equal(t, len(f.Writes()), writes)
+	assert.DeepEqual(t, p.ReactionsBy("pr", bot), []string{"+1"})
+	assert.DeepEqual(t, p.Labels, []string{"paco/clean"})
 }
 
 func TestFailLeavesANewerRunAlone(t *testing.T) {

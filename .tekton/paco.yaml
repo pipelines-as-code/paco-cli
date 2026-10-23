@@ -1,0 +1,47 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: paco
+  annotations:
+    # Use the Pipeline from this repository at the pull request's commit, so a
+    # change to tekton/paco.pipeline.yaml is reviewed with itself. The image
+    # stays on "latest" because pull requests do not publish images.
+    pipelinesascode.tekton.dev/pipeline: "tekton/paco.pipeline.yaml"
+    pipelinesascode.tekton.dev/on-cel-expression: |
+      event == "pull_request" && target_branch == "main" && (body.action == "opened" || body.action == "reopened")
+    pipelinesascode.tekton.dev/on-comment: "^/paco[[:space:]]+(review|summary)[[:space:]]*$"
+    pipelinesascode.tekton.dev/max-keep-runs: "2"
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+spec:
+  pipelineRef:
+    name: paco
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        fsGroup: 65532
+  params:
+    - name: repo_owner
+      value: "{{repo_owner}}"
+    - name: repo_name
+      value: "{{repo_name}}"
+    - name: pull_request_number
+      value: "{{pull_request_number}}"
+    - name: trigger_comment
+      value: |
+        {{ trigger_comment }}
+    - name: comment_id
+      value: "{{ cel: has(body.comment) && has(body.comment.id) ? string(int(body.comment.id)) : '' }}"
+    - name: git_auth_secret
+      value: "{{git_auth_secret}}"
+    - name: vertex_project
+      value: "itpc-gcp-pnd-pe-eng-claude"
+    - name: model
+      value: "claude-opus-4-6@default"
+    - name: reasoning_effort
+      value: "high"
+    - name: verify_findings
+      value: "true"
+  workspaces:
+    - name: source
+      emptyDir: {}

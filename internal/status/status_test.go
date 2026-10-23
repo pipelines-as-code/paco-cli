@@ -278,3 +278,16 @@ func TestPublishCutsASummaryThatOnlyFitsWithoutTheHeader(t *testing.T) {
 	assert.Equal(t, h.Run, "run-a")
 	assert.Assert(t, strings.HasSuffix(body, cutNote))
 }
+
+func TestCancelledRunDoesNotClaim(t *testing.T) {
+	f, p, c := setup(t)
+	newer := Marker + "\n" + Header{Run: "run-b", Comment: "pr", State: Fetching}.String() + "\n"
+	id := p.AddComment(bot, newer)
+	r, _ := reporter(t, c, "run-a", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	assert.Equal(t, r.Claim(ctx).Claimed, false)
+	assert.Equal(t, p.Body(id), newer)
+	assert.Equal(t, len(f.Writes()), 0)
+}

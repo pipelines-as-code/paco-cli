@@ -55,7 +55,7 @@ func TestHeartbeatStopsBeforeCompletion(t *testing.T) {
 func TestSingleProgressDoesNotDumpResponses(t *testing.T) {
 	var out bytes.Buffer
 	ws := setupWorkspaceWithDiff(t, "diff")
-	fake := &fakeClient{text: "unparseable private source"}
+	fake := &fakeClient{text: "unparsable private source"}
 	assert.NilError(t, Run(context.Background(), Options{Workspace: ws, Resolve: fakeResolve(fake), LogWriter: &out}))
 	assert.Assert(t, strings.Contains(out.String(), "Review started"))
 	assert.Assert(t, strings.Contains(out.String(), "Review failed: no findings ready"))

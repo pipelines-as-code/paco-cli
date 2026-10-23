@@ -138,9 +138,9 @@ func (inv *Inventory) addFile(file FileDiff, head, before *Snapshot) {
 	headByKey, beforeByKey := groupByKey(headSide.decls), groupByKey(beforeSide.decls)
 	paired := map[*declaration]bool{}
 	for _, h := range headSide.decls {
-		befores := beforeByKey[h.key()]
-		if len(headByKey[h.key()]) == 1 && len(befores) == 1 {
-			b := befores[0]
+		beforeMatches := beforeByKey[h.key()]
+		if len(headByKey[h.key()]) == 1 && len(beforeMatches) == 1 {
+			b := beforeMatches[0]
 			paired[b] = true
 			if !h.changed && !b.changed {
 				continue
@@ -153,7 +153,7 @@ func (inv *Inventory) addFile(file FileDiff, head, before *Snapshot) {
 		}
 		status := "added"
 		switch {
-		case len(headByKey[h.key()]) > 1 || len(befores) > 1:
+		case len(headByKey[h.key()]) > 1 || len(beforeMatches) > 1:
 			status = "ambiguous"
 		case !beforeSide.available && file.Status != "added":
 			status = "changed"

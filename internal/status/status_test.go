@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient/ghtest"
@@ -241,4 +242,39 @@ func TestRunCommandRejectsBadFlagsBeforeAnyRequest(t *testing.T) {
 		assert.Assert(t, RunCommand(context.Background(), opts) != nil, "%+v", opts)
 	}
 	assert.Equal(t, len(f.Calls("")), 0)
+}
+
+func TestProgressNeedsOwnership(t *testing.T) {
+	tests := []struct {
+		name   string
+		sticky string
+	}{
+		{"a newer run took over", Header{Run: "run-b", Comment: "pr", State: Clean}.String()},
+		{"this run never claimed the comment", "## old review"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, p, c := setup(t)
+			p.AddComment(bot, Marker+"\n"+tt.sticky+"\nbody")
+			r, _ := reporter(t, c, "run-a", "55")
+
+			r.Progress(context.Background(), Reviewing)
+			assert.Equal(t, len(f.Writes()), 0)
+		})
+	}
+}
+
+func TestPublishCutsASummaryThatOnlyFitsWithoutTheHeader(t *testing.T) {
+	_, p, c := setup(t)
+	r, _ := reporter(t, c, "run-a", "")
+	text := strings.Repeat("x", maxCommentChars-len(Marker)-1)
+
+	st, err := r.Publish(context.Background(), nil, Marker+"\n"+text, Clean)
+	assert.NilError(t, err)
+	body := p.Body(st.ID)
+	assert.Equal(t, utf8.RuneCountInString(body), maxCommentChars)
+	h, ok := parseHeader(body)
+	assert.Assert(t, ok)
+	assert.Equal(t, h.Run, "run-a")
+	assert.Assert(t, strings.HasSuffix(body, cutNote))
 }

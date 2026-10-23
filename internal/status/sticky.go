@@ -244,18 +244,14 @@ func (r *Reporter) Resolve(ctx context.Context, c Claim) (*Sticky, bool, error) 
 	}
 }
 
-const cutNote = "\n\n_This summary was cut to fit GitHub's comment size limit._"
-
 // Publish writes post's final body, which starts with Marker, under this
-// run's header. The header is kept and the summary cut when both do not fit.
+// run's header. A body too large to post is an error: cutting it could drop
+// findings that are published nowhere else.
 func (r *Reporter) Publish(ctx context.Context, st *Sticky, body string, s State) (*Sticky, error) {
 	h := r.header(s)
-	rest := strings.TrimPrefix(strings.TrimPrefix(body, Marker), "\n")
-	full := compose(h, "", rest)
+	full := compose(h, "", strings.TrimPrefix(strings.TrimPrefix(body, Marker), "\n"))
 	if !fits(full) {
-		keep := maxCommentChars - utf8.RuneCountInString(compose(h, "", "")+cutNote)
-		full = compose(h, "", string([]rune(rest)[:keep])+cutNote)
-		r.log.Line("Warning: the summary was cut to fit GitHub's comment size limit")
+		return nil, fmt.Errorf("the Paco summary comment is too large to post (%d characters, GitHub allows %d)", utf8.RuneCountInString(full), maxCommentChars)
 	}
 	if st == nil {
 		id, err := r.gh.CreateComment(ctx, r.repo, r.pr, full)

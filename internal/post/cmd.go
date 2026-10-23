@@ -189,7 +189,11 @@ func Run(ctx context.Context, opts Options) (err error) {
 			log.Line("Inline publication failed: %s", err.Error())
 			noteBody := stickyBody + "\n\n> [!NOTE]\n> Some inline comments could not be posted (a line number may fall outside the diff)."
 			state = status.Failed
-			_ = t.sticky(ctx, noteBody, state)
+			if err := t.sticky(ctx, noteBody, state); err != nil {
+				log.Line("Warning: could not add the inline failure note: %s", err.Error())
+				t.fail(ctx)
+				return nil
+			}
 		} else {
 			log.Line("Publication completed: %d inline findings posted", len(inlineComments))
 		}

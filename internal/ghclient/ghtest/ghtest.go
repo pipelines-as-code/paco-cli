@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -26,6 +27,7 @@ type Fake struct {
 	mu     sync.Mutex
 	routes map[string]http.HandlerFunc
 	calls  []Call
+	pr     *PR
 }
 
 // New starts a fake server and returns it with a client pointed at it.
@@ -53,7 +55,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.calls = append(f.calls, Call{Key: key, Body: string(body)})
 	h := f.routes[key]
+	pr := f.pr
 	f.mu.Unlock()
+	if pr != nil && pr.serve(w, r, string(body)) {
+		return
+	}
 	if h == nil {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = io.WriteString(w, `{"message":"Not Found"}`)
@@ -96,3 +102,14 @@ func (f *Fake) Calls(key string) []Call {
 
 // Called reports whether a request matching key was received.
 func (f *Fake) Called(key string) bool { return len(f.Calls(key)) > 0 }
+
+// Writes returns received requests that change state on GitHub.
+func (f *Fake) Writes() []Call {
+	var out []Call
+	for _, c := range f.Calls("") {
+		if !strings.HasPrefix(c.Key, "GET ") && c.Key != "POST /graphql" {
+			out = append(out, c)
+		}
+	}
+	return out
+}

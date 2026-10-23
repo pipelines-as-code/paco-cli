@@ -10,8 +10,11 @@ Fetches the PR diff and existing feedback and writes artifacts for the next step
 |---|---|---|
 | `--repo` | yes | GitHub repository (`owner/name`) |
 | `--pr` | yes | Pull request number |
-| `--comment-id` | no | Trigger comment ID for eyes reaction |
+| `--comment-id` | no | Trigger comment ID that gets the [status reaction](#review-status); empty reacts on the PR |
 | `--workspace` | no | Workspace directory (default `.`) |
+| `--run-id` | no | Run identifier, such as the PipelineRun name; generated when empty |
+| `--status-labels` | no | Set a status label on the PR (default `true`) |
+| `--status-label-prefix` | no | Status label prefix (default `paco/`) |
 
 ### Environment
 
@@ -44,10 +47,18 @@ A missing token or invalid URL is reported as a skip (`.paco-error`).
 | `.paco-source.json` | Redacted text-file snapshot pinned to `.head_sha`, for read-only exploration |
 | `.paco-source-before.json` | Optional comparison-side source snapshot |
 | `.paco-input.json` | Versioned PR/comparison identities, diff digest, and context availability |
+| `.paco-claim.json` | Run ID and whether this run took over the summary comment, for `post` |
 
 The source snapshot is optional. If collection fails or hits a limit,
 `diff` logs a warning and writes none. Any snapshot from an earlier run
 is deleted first.
+
+### GitHub Side Effects
+
+After the token check, `diff` marks the summary comment as owned by this
+run with an in-progress banner (creating the comment on a PR's first
+review) and sets the `fetching` state. It sets `reviewing` once all
+artifacts are written. See [Review status](#review-status).
 
 ### Toolchain Detection
 
@@ -285,6 +296,10 @@ Posts the review results to GitHub.
 | `--repo` | yes | GitHub repository (`owner/name`) |
 | `--pr` | yes | Pull request number |
 | `--workspace` | no | Workspace directory (default `.`) |
+| `--comment-id` | no | Trigger comment ID, as passed to `diff` |
+| `--run-id` | no | Must match the ID `diff` used; empty uses the one in `.paco-claim.json` |
+| `--status-labels` | no | Set a status label on the PR (default `true`) |
+| `--status-label-prefix` | no | Status label prefix (default `paco/`) |
 
 ### Environment
 
@@ -297,6 +312,7 @@ invalid URL is a fatal error.
 
 - `.paco-review.json`, `.valid-lines.json`, `.existing-inline.json`
 - `.head_sha`, `.paco-mode`, `.paco-failed`, `.paco-security-block`
+- `.paco-claim.json`
 
 ### GitHub Side Effects
 
@@ -304,6 +320,10 @@ invalid URL is a fatal error.
 2. Create/ensure `paco/review-*` difficulty labels, apply current, remove stale
 3. Add `security-review` label when `security_sensitive` is true (never removed)
 4. Submit inline review with filtered, deduplicated comments on valid diff lines
+5. Set the final [review status](#review-status)
+
+If a newer run has taken over the summary comment since this run's
+`diff`, `post` logs it and exits 0 without writing anything.
 
 ### Exit Codes
 
@@ -311,3 +331,72 @@ invalid URL is a fatal error.
 |---|---|
 | 0 | Success (legacy inline review failure is logged; verified-mode failure is fatal) |
 | non-zero | Fatal error |
+
+## `paco status`
+
+Marks a run as failed on the PR. The pipeline's `finally` task runs it
+when the review task fails, times out or is interrupted.
+
+### Inputs
+
+| Flag | Required | Description |
+|---|---|---|
+| `--state` | yes | Only `failed` is supported |
+| `--repo` | yes | GitHub repository (`owner/name`) |
+| `--pr` | yes | Pull request number |
+| `--run-id` | yes | The run ID passed to `diff` |
+| `--comment-id` | no | Trigger comment ID, as passed to `diff` |
+| `--status-labels` | no | Set a status label on the PR (default `true`) |
+| `--status-label-prefix` | no | Status label prefix (default `paco/`) |
+
+It acts only while the summary comment still belongs to `--run-id`, so a
+cancelled run never overwrites a newer one. It exits non-zero only for
+invalid flags.
+
+## Review status
+
+Paco shows a run's state in three places: a reaction on the trigger
+comment (or on the PR when there is none), a status label, and the
+summary comment.
+
+| State | Set by | Reaction | Label | Summary comment |
+|---|---|---|---|---|
+| `fetching` | `diff` start | `eyes` | `paco/reviewing` | In-progress banner |
+| `reviewing` | `diff` end | `rocket` | `paco/reviewing` | In-progress banner |
+| `clean` | `post`, no findings | `+1` | `paco/clean` | Review |
+| `findings` | `post`, findings published | `-1` | `paco/findings` | Review |
+| `summarized` | `post`, `/paco summary` | `hooray` | none | Summary |
+| `failed` | `post` or `paco status` | `confused` | `paco/failed` | Failed banner or failed review |
+
+Each state replaces Paco's previous status reaction and label. Other
+users' reactions and other labels are left alone. `review` has no GitHub
+token, so `reviewing` is set at the end of `diff`.
+
+The summary comment's first two lines identify the run that owns it:
+
+```text
+<!-- paco-review -->
+<!-- paco-status run=<run-id> comment=<comment-id|pr> state=<state> -->
+```
+
+Only comments written by the token's own user (the GitHub App bot) are
+trusted. While a run is in progress or after it fails, the previous
+review stays below the banner. When the comment is too large for the
+banner, only the header is updated; when even that does not fit, the
+comment is left unchanged.
+
+Status reporting is best effort and never fails a step. It is turned off
+for the run, with a warning, when the token's user cannot be identified
+or the run ID is invalid; the review is then published as before.
+
+Known limitations:
+
+- If the Paco image cannot be pulled, the `finally` task fails too and
+  the PR keeps showing `eyes`.
+- A crash in `diff` before it marks the summary comment is not reported.
+- Cluster problems (scheduling, registry or Pipelines-as-Code outages, a
+  deleted PipelineRun) cannot be reported from inside the pipeline.
+- Overlapping runs without `cancel-in-progress` are best effort: the
+  last run to take over the summary comment wins.
+- Do not use the status labels in an `on-label` trigger; Paco changes
+  them on every run.

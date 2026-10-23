@@ -52,14 +52,24 @@ spec:
       default: ""
     - name: vertex_location
       default: "global"
+    - name: status_labels
+      description: Show the review state as a label on the pull request.
+      default: "true"
+    - name: status_label_prefix
+      default: "paco/"
   workspaces:
     - name: source
   tasks:
     - name: paco-review
+      params:
+        - name: run_id
+          value: "$(context.pipelineRun.name)"
       workspaces:
         - name: source
           workspace: source
       taskSpec:
+        params:
+          - name: run_id
         workspaces:
           - name: source
         steps:
@@ -79,6 +89,9 @@ spec:
               - "--pr=$(params.pull_request_number)"
               - "--comment-id=$(params.comment_id)"
               - "--workspace=$(workspaces.source.path)"
+              - "--run-id=$(params.run_id)"
+              - "--status-labels=$(params.status_labels)"
+              - "--status-label-prefix=$(params.status_label_prefix)"
 
           - name: paco-review
             displayName: "Run Paco review"
@@ -126,7 +139,11 @@ spec:
             args:
               - "--repo=$(params.repo_owner)/$(params.repo_name)"
               - "--pr=$(params.pull_request_number)"
+              - "--comment-id=$(params.comment_id)"
               - "--workspace=$(workspaces.source.path)"
+              - "--run-id=$(params.run_id)"
+              - "--status-labels=$(params.status_labels)"
+              - "--status-label-prefix=$(params.status_label_prefix)"
         volumes:
           - name: vertex-credentials
             secret:
@@ -135,3 +152,42 @@ spec:
               items:
                 - key: "$(params.vertex_credentials_key)"
                   path: credentials.json
+  finally:
+    # Marks the run as failed on the pull request when the review task failed,
+    # timed out or was interrupted before paco could report it. It changes
+    # nothing if a newer run owns the review comment.
+    - name: paco-status
+      when:
+        - input: "$(tasks.paco-review.status)"
+          operator: in
+          values: ["Failed"]
+      params:
+        - name: run_id
+          value: "$(context.pipelineRun.name)"
+      taskSpec:
+        params:
+          - name: run_id
+        steps:
+          - name: report-failure
+            displayName: "Mark the review as failed"
+            image: "$(params.image)"
+            imagePullPolicy: Always
+            computeResources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+            env:
+              - name: GH_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: "$(params.git_auth_secret)"
+                    key: "git-provider-token"
+            command: ["/ko-app/paco", "status"]
+            args:
+              - "--state=failed"
+              - "--repo=$(params.repo_owner)/$(params.repo_name)"
+              - "--pr=$(params.pull_request_number)"
+              - "--comment-id=$(params.comment_id)"
+              - "--run-id=$(params.run_id)"
+              - "--status-labels=$(params.status_labels)"
+              - "--status-label-prefix=$(params.status_label_prefix)"

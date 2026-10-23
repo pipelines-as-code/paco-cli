@@ -12,6 +12,7 @@ import (
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
 	"github.com/pipelines-as-code/paco-cli/internal/source"
+	"github.com/pipelines-as-code/paco-cli/internal/status"
 	"github.com/pipelines-as-code/paco-cli/internal/toolchain"
 	"github.com/spf13/cobra"
 )
@@ -31,6 +32,9 @@ func Command() *cobra.Command {
 	cmd.Flags().IntVar(&opts.PRNumber, "pr", 0, "Pull request number")
 	cmd.Flags().StringVar(&opts.CommentID, "comment-id", "", "Trigger comment ID (optional)")
 	cmd.Flags().StringVar(&opts.Workspace, "workspace", ".", "Workspace directory for artifacts")
+	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "Run identifier, e.g. the PipelineRun name; generated when empty")
+	cmd.Flags().BoolVar(&opts.StatusLabels, "status-labels", true, "Set a status label on the pull request")
+	cmd.Flags().StringVar(&opts.StatusLabelPrefix, "status-label-prefix", status.DefaultPrefix, "Prefix of the status labels")
 	_ = cmd.MarkFlagRequired("repo")
 	_ = cmd.MarkFlagRequired("pr")
 
@@ -47,6 +51,10 @@ type Options struct {
 	PRNumber  int
 	CommentID string
 	Workspace string
+	// RunID identifies this run on the pull request; empty generates one.
+	RunID             string
+	StatusLabels      bool
+	StatusLabelPrefix string
 	// GitHub is the API client; nil builds one from the environment.
 	GitHub *ghclient.Client
 }
@@ -58,6 +66,7 @@ func Run(ctx context.Context, opts Options) error {
 		artifact.FileDiff, artifact.FileValidLines, artifact.FileExistingInline, artifact.FileExistingFeedback,
 		artifact.FileHeadSHA, artifact.FileReviewRules, artifact.FileToolchains, artifact.FileError,
 		artifact.FileReview, artifact.FileMode, artifact.FileFailed, artifact.FileSecurityBlock, artifact.FileStatus,
+		artifact.FileClaim,
 	} {
 		if err := os.Remove(ws.Path(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("clearing %s: %w", name, err)
@@ -80,7 +89,24 @@ func Run(ctx context.Context, opts Options) error {
 		return ws.WriteSkip(fmt.Sprintf("Paco: the Pipelines-as-Code GitHub App token could not access %s.", repo))
 	}
 
-	addEyesReaction(ctx, gh, repo, pr, opts.CommentID)
+	runID := opts.RunID
+	if runID == "" {
+		runID = status.NewRunID()
+	}
+	rep := status.New(ctx, status.Config{
+		GitHub: gh, Repo: repo, PR: pr, CommentID: opts.CommentID, RunID: runID,
+		Labels: opts.StatusLabels, Prefix: opts.StatusLabelPrefix,
+	})
+	claim := status.Claim{RunID: runID}
+	if rep != nil {
+		claim = rep.Claim(ctx)
+	}
+	if err := status.WriteClaim(ws, claim); err != nil {
+		return err
+	}
+	if rep != nil {
+		rep.Set(ctx, status.Fetching)
+	}
 
 	refs, err := gh.PullRequestMetadata(ctx, repo, pr)
 	if err != nil {
@@ -233,6 +259,9 @@ func Run(ctx context.Context, opts Options) error {
 	if err := ws.Write(artifact.FileInputManifest, encoded); err != nil {
 		return err
 	}
+	if rep != nil {
+		rep.Set(ctx, status.Reviewing)
+	}
 
 	fmt.Printf("Existing feedback digest: %d bytes\n", len(feedbackDigest))
 	fmt.Printf("Diff size: %d bytes\n", len(rawDiff))
@@ -254,14 +283,6 @@ func fetchSource(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, h
 	}
 	fmt.Printf("Source snapshot: %d files, %d excluded\n", len(snapshot.Files), snapshot.Excluded)
 	return snapshot, nil
-}
-
-func addEyesReaction(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, pr int, commentID string) {
-	if id, ok := ghclient.ParseCommentID(commentID); ok {
-		_ = gh.AddCommentReaction(ctx, repo, id, "eyes")
-		return
-	}
-	_ = gh.AddIssueReaction(ctx, repo, pr, "eyes")
 }
 
 func fetchReviewRules(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, baseBranch string, ws *artifact.Workspace) {

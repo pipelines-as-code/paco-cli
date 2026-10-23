@@ -178,15 +178,80 @@ func (c *Client) PullRequestDiff(ctx context.Context, r Repo, pr int) (string, e
 	return d, err
 }
 
-// AddIssueReaction reacts to the pull request itself.
-func (c *Client) AddIssueReaction(ctx context.Context, r Repo, pr int, content string) error {
-	_, _, err := c.rest.Reactions.CreateIssueReaction(ctx, r.Owner, r.Name, pr, content)
-	return err
+// Reaction is an emoji reaction on a pull request or comment.
+type Reaction struct {
+	ID      int64
+	Login   string
+	Content string
+}
+
+func toReaction(rc *github.Reaction) Reaction {
+	return Reaction{ID: rc.GetID(), Login: rc.GetUser().GetLogin(), Content: rc.GetContent()}
+}
+
+// AddIssueReaction reacts to the pull request itself. GitHub returns the
+// existing reaction when the caller already reacted with the same content.
+func (c *Client) AddIssueReaction(ctx context.Context, r Repo, pr int, content string) (Reaction, error) {
+	rc, _, err := c.rest.Reactions.CreateIssueReaction(ctx, r.Owner, r.Name, pr, content)
+	if err != nil {
+		return Reaction{}, err
+	}
+	return toReaction(rc), nil
 }
 
 // AddCommentReaction reacts to an issue comment.
-func (c *Client) AddCommentReaction(ctx context.Context, r Repo, commentID int64, content string) error {
-	_, _, err := c.rest.Reactions.CreateIssueCommentReaction(ctx, r.Owner, r.Name, commentID, content)
+func (c *Client) AddCommentReaction(ctx context.Context, r Repo, commentID int64, content string) (Reaction, error) {
+	rc, _, err := c.rest.Reactions.CreateIssueCommentReaction(ctx, r.Owner, r.Name, commentID, content)
+	if err != nil {
+		return Reaction{}, err
+	}
+	return toReaction(rc), nil
+}
+
+// IssueReactions lists every reaction on the pull request itself.
+func (c *Client) IssueReactions(ctx context.Context, r Repo, pr int) ([]Reaction, error) {
+	return listReactions(func(opts *github.ListReactionOptions) ([]*github.Reaction, *github.Response, error) {
+		return c.rest.Reactions.ListIssueReactions(ctx, r.Owner, r.Name, pr, opts)
+	})
+}
+
+// CommentReactions lists every reaction on an issue comment.
+func (c *Client) CommentReactions(ctx context.Context, r Repo, commentID int64) ([]Reaction, error) {
+	return listReactions(func(opts *github.ListReactionOptions) ([]*github.Reaction, *github.Response, error) {
+		return c.rest.Reactions.ListIssueCommentReactions(ctx, r.Owner, r.Name, commentID, opts)
+	})
+}
+
+func listReactions(list func(*github.ListReactionOptions) ([]*github.Reaction, *github.Response, error)) ([]Reaction, error) {
+	var out []Reaction
+	opts := &github.ListReactionOptions{ListOptions: github.ListOptions{PerPage: perPage}}
+	for {
+		page, resp, err := list(opts)
+		if err != nil {
+			return out, err
+		}
+		for _, rc := range page {
+			out = append(out, toReaction(rc))
+		}
+		if resp.NextPage == 0 {
+			return out, nil
+		}
+		if resp.NextPage <= opts.Page {
+			return out, errors.New("reactions pagination did not advance")
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+// DeleteIssueReaction removes one of the caller's reactions on the pull request.
+func (c *Client) DeleteIssueReaction(ctx context.Context, r Repo, pr int, id int64) error {
+	_, err := c.rest.Reactions.DeleteIssueReaction(ctx, r.Owner, r.Name, pr, id)
+	return err
+}
+
+// DeleteCommentReaction removes one of the caller's reactions on a comment.
+func (c *Client) DeleteCommentReaction(ctx context.Context, r Repo, commentID, id int64) error {
+	_, err := c.rest.Reactions.DeleteIssueCommentReaction(ctx, r.Owner, r.Name, commentID, id)
 	return err
 }
 
@@ -281,10 +346,13 @@ func (c *Client) IssueComments(ctx context.Context, r Repo, pr int) ([]IssueComm
 	return out, nil
 }
 
-// CreateComment adds a top-level comment to the pull request.
-func (c *Client) CreateComment(ctx context.Context, r Repo, pr int, body string) error {
-	_, _, err := c.rest.Issues.CreateComment(ctx, r.Owner, r.Name, pr, github.IssueCommentRequest{Body: body})
-	return err
+// CreateComment adds a top-level comment to the pull request and returns its ID.
+func (c *Client) CreateComment(ctx context.Context, r Repo, pr int, body string) (int64, error) {
+	ic, _, err := c.rest.Issues.CreateComment(ctx, r.Owner, r.Name, pr, github.IssueCommentRequest{Body: body})
+	if err != nil {
+		return 0, err
+	}
+	return ic.GetID(), nil
 }
 
 // UpdateComment replaces the body of an existing comment.
@@ -335,6 +403,28 @@ func isAlreadyExists(err error) bool {
 func (c *Client) AddLabel(ctx context.Context, r Repo, pr int, name string) error {
 	_, _, err := c.rest.Issues.AddLabelsToIssue(ctx, r.Owner, r.Name, pr, []string{name})
 	return err
+}
+
+// IssueLabels lists the names of the labels on the pull request.
+func (c *Client) IssueLabels(ctx context.Context, r Repo, pr int) ([]string, error) {
+	var out []string
+	opts := &github.ListOptions{PerPage: perPage}
+	for {
+		page, resp, err := c.rest.Issues.ListLabelsByIssue(ctx, r.Owner, r.Name, pr, opts)
+		if err != nil {
+			return out, err
+		}
+		for _, l := range page {
+			out = append(out, l.GetName())
+		}
+		if resp.NextPage == 0 {
+			return out, nil
+		}
+		if resp.NextPage <= opts.Page {
+			return out, errors.New("labels pagination did not advance")
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 // RemoveLabel removes a label from the pull request; a missing label is not
@@ -408,37 +498,32 @@ const reviewThreadsQuery = `query($owner: String!, $name: String!, $number: Int!
   }
 }`
 
-type reviewThreadsResponse struct {
-	Data struct {
-		Repository struct {
-			PullRequest struct {
-				ReviewThreads struct {
-					PageInfo struct {
-						HasNextPage bool   `json:"hasNextPage"`
-						EndCursor   string `json:"endCursor"`
-					} `json:"pageInfo"`
-					Nodes []struct {
-						IsResolved bool `json:"isResolved"`
-						Comments   struct {
-							Nodes []struct {
-								Path              string  `json:"path"`
-								Line              *int    `json:"line"`
-								OriginalLine      *int    `json:"originalLine"`
-								Body              string  `json:"body"`
-								Author            *author `json:"author"`
-								PullRequestReview *struct {
-									State string `json:"state"`
-								} `json:"pullRequestReview"`
-							} `json:"nodes"`
-						} `json:"comments"`
-					} `json:"nodes"`
-				} `json:"reviewThreads"`
-			} `json:"pullRequest"`
-		} `json:"repository"`
-	} `json:"data"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
+type reviewThreadsData struct {
+	Repository struct {
+		PullRequest struct {
+			ReviewThreads struct {
+				PageInfo struct {
+					HasNextPage bool   `json:"hasNextPage"`
+					EndCursor   string `json:"endCursor"`
+				} `json:"pageInfo"`
+				Nodes []struct {
+					IsResolved bool `json:"isResolved"`
+					Comments   struct {
+						Nodes []struct {
+							Path              string  `json:"path"`
+							Line              *int    `json:"line"`
+							OriginalLine      *int    `json:"originalLine"`
+							Body              string  `json:"body"`
+							Author            *author `json:"author"`
+							PullRequestReview *struct {
+								State string `json:"state"`
+							} `json:"pullRequestReview"`
+						} `json:"nodes"`
+					} `json:"comments"`
+				} `json:"nodes"`
+			} `json:"reviewThreads"`
+		} `json:"pullRequest"`
+	} `json:"repository"`
 }
 
 type author struct {
@@ -451,13 +536,13 @@ func (c *Client) ReviewThreads(ctx context.Context, r Repo, pr int) ([]ThreadCom
 	var cursor *string
 	seen := make(map[string]bool)
 	for {
-		var resp reviewThreadsResponse
+		var data reviewThreadsData
 		if err := c.graphql(ctx, reviewThreadsQuery, map[string]any{
 			"owner": r.Owner, "name": r.Name, "number": pr, "endCursor": cursor,
-		}, &resp); err != nil {
+		}, &data); err != nil {
 			return out, err
 		}
-		threads := resp.Data.Repository.PullRequest.ReviewThreads
+		threads := data.Repository.PullRequest.ReviewThreads
 		for _, thread := range threads.Nodes {
 			for _, cm := range thread.Comments.Nodes {
 				line := 0
@@ -493,7 +578,25 @@ func (c *Client) ReviewThreads(ctx context.Context, r Repo, pr int) ([]ThreadCom
 	return out, nil
 }
 
-func (c *Client) graphql(ctx context.Context, query string, vars map[string]any, out *reviewThreadsResponse) error {
+// Viewer returns the login of the token's owner. For a GitHub App
+// installation token this is the app's bot login, e.g. "my-app[bot]".
+func (c *Client) Viewer(ctx context.Context) (string, error) {
+	var data struct {
+		Viewer struct {
+			Login string `json:"login"`
+		} `json:"viewer"`
+	}
+	if err := c.graphql(ctx, "query { viewer { login } }", nil, &data); err != nil {
+		return "", err
+	}
+	if data.Viewer.Login == "" {
+		return "", errors.New("graphql viewer login is empty")
+	}
+	return data.Viewer.Login, nil
+}
+
+// graphql decodes the response's data field into out.
+func (c *Client) graphql(ctx context.Context, query string, vars map[string]any, out any) error {
 	payload, err := json.Marshal(map[string]any{"query": query, "variables": vars})
 	if err != nil {
 		return err
@@ -516,11 +619,23 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("graphql request failed: %s", resp.Status)
 	}
-	if err := json.Unmarshal(body, out); err != nil {
+	var envelope struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
 		return fmt.Errorf("decoding graphql response: %w", err)
 	}
-	if len(out.Errors) > 0 {
-		return fmt.Errorf("graphql error: %s", out.Errors[0].Message)
+	if len(envelope.Errors) > 0 {
+		return fmt.Errorf("graphql error: %s", envelope.Errors[0].Message)
+	}
+	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(envelope.Data, out); err != nil {
+		return fmt.Errorf("decoding graphql response: %w", err)
 	}
 	return nil
 }

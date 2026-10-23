@@ -14,10 +14,11 @@ import (
 	"github.com/pipelines-as-code/paco-cli/internal/progress"
 	"github.com/pipelines-as-code/paco-cli/internal/review"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
+	"github.com/pipelines-as-code/paco-cli/internal/status"
 	"github.com/spf13/cobra"
 )
 
-const marker = "<!-- paco-review -->"
+const marker = status.Marker
 
 type scoreLabel struct {
 	Rating int
@@ -47,7 +48,12 @@ type Options struct {
 	Repo      string
 	PRNumber  int
 	Workspace string
-	LogWriter io.Writer
+	CommentID string
+	// RunID must match the run that ran diff; empty uses diff's.
+	RunID             string
+	StatusLabels      bool
+	StatusLabelPrefix string
+	LogWriter         io.Writer
 	// GitHub is the API client; nil builds one from the environment.
 	GitHub *ghclient.Client
 }
@@ -68,13 +74,17 @@ func Command() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Repo, "repo", "", "GitHub repository (owner/name)")
 	cmd.Flags().IntVar(&opts.PRNumber, "pr", 0, "Pull request number")
 	cmd.Flags().StringVar(&opts.Workspace, "workspace", ".", "Workspace directory for artifacts")
+	cmd.Flags().StringVar(&opts.CommentID, "comment-id", "", "Trigger comment ID (optional)")
+	cmd.Flags().StringVar(&opts.RunID, "run-id", "", "Run identifier passed to diff; defaults to the one diff recorded")
+	cmd.Flags().BoolVar(&opts.StatusLabels, "status-labels", true, "Set a status label on the pull request")
+	cmd.Flags().StringVar(&opts.StatusLabelPrefix, "status-label-prefix", status.DefaultPrefix, "Prefix of the status labels")
 	_ = cmd.MarkFlagRequired("repo")
 	_ = cmd.MarkFlagRequired("pr")
 
 	return cmd
 }
 
-func Run(ctx context.Context, opts Options) error {
+func Run(ctx context.Context, opts Options) (err error) {
 	ws := &artifact.Workspace{Dir: opts.Workspace}
 	pr := opts.PRNumber
 
@@ -95,18 +105,32 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	log := progress.New(opts.LogWriter, []string{gh.Token()})
+	t, proceed, err := newTarget(ctx, ws, gh, repo, pr, opts, log)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		log.Line("Status: a newer Paco run owns the review comment; not publishing this run")
+		return nil
+	}
+	defer func() {
+		if err != nil {
+			t.fail(ctx)
+		}
+	}()
+
 	if ws.Exists(artifact.FileSecurityBlock) {
-		return postSticky(ctx, gh, repo, pr, withheldBody)
+		return t.withhold(ctx)
 	}
 
 	// Belt-and-braces rescan with this step's own GitHub token
 	reviewData, _ := ws.Read(artifact.FileReview)
 	if reason := security.ScanSecrets(string(reviewData), gh.Token()); reason != "" {
 		log.Line("Security filter tripped: %s; withholding review", reason)
-		return postSticky(ctx, gh, repo, pr, withheldBody)
+		return t.withhold(ctx)
 	}
 	if rev.Verified {
-		return postVerified(ctx, ws, gh, repo, pr, rev, log)
+		return postVerified(ctx, ws, t, rev, log)
 	}
 	if ws.Exists(review.FileStatus) {
 		return errors.New("verification status exists but review output is not verified; rerun review")
@@ -141,7 +165,16 @@ func Run(ctx context.Context, opts Options) error {
 	stickyBody := fmt.Sprintf("%s\n## Paco Review %s\n\n%s\n%s\n%s\n<sub>Reviewed commit: %s</sub>",
 		marker, statusEmoji, summary, scoreLine, findingsLine, headSHA)
 
-	if err := postSticky(ctx, gh, repo, pr, stickyBody); err != nil {
+	state := status.Clean
+	switch {
+	case failed:
+		state = status.Failed
+	case mode == "summary":
+		state = status.Summarized
+	case len(inlineComments) > 0:
+		state = status.Findings
+	}
+	if err := t.sticky(ctx, stickyBody, state); err != nil {
 		return err
 	}
 
@@ -155,7 +188,8 @@ func Run(ctx context.Context, opts Options) error {
 		if err != nil {
 			log.Line("Inline publication failed: %s", err.Error())
 			noteBody := stickyBody + "\n\n> [!NOTE]\n> Some inline comments could not be posted (a line number may fall outside the diff)."
-			_ = postSticky(ctx, gh, repo, pr, noteBody)
+			state = status.Failed
+			_ = t.sticky(ctx, noteBody, state)
 		} else {
 			log.Line("Publication completed: %d inline findings posted", len(inlineComments))
 		}
@@ -167,7 +201,77 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	t.finish(ctx, state)
 	return nil
+}
+
+// target is where post publishes. Without a status reporter it behaves as
+// before status reporting existed.
+type target struct {
+	gh   *ghclient.Client
+	repo ghclient.Repo
+	pr   int
+	rep  *status.Reporter
+	st   *status.Sticky
+}
+
+// newTarget reports false when a newer run owns the review comment, in which
+// case this run must not write anything.
+func newTarget(ctx context.Context, ws *artifact.Workspace, gh *ghclient.Client, repo ghclient.Repo, pr int, opts Options, log *progress.Logger) (*target, bool, error) {
+	t := &target{gh: gh, repo: repo, pr: pr}
+	claim, ok := status.ReadClaim(ws)
+	if !ok {
+		return t, true, nil
+	}
+	if opts.RunID != "" && opts.RunID != claim.RunID {
+		log.Line("Warning: --run-id does not match the run that fetched the diff; status reporting disabled")
+		return t, true, nil
+	}
+	t.rep = status.New(ctx, status.Config{
+		GitHub: gh, Repo: repo, PR: pr, CommentID: opts.CommentID, RunID: claim.RunID,
+		Labels: opts.StatusLabels, Prefix: opts.StatusLabelPrefix, Log: log,
+	})
+	if t.rep == nil {
+		return t, true, nil
+	}
+	st, proceed, err := t.rep.Resolve(ctx, claim)
+	if err != nil {
+		return nil, false, fmt.Errorf("listing pull request comments: %w", err)
+	}
+	t.st = st
+	return t, proceed, nil
+}
+
+func (t *target) sticky(ctx context.Context, body string, state status.State) error {
+	if t.rep == nil {
+		return postSticky(ctx, t.gh, t.repo, t.pr, body)
+	}
+	st, err := t.rep.Publish(ctx, t.st, body, state)
+	if err != nil {
+		return err
+	}
+	t.st = st
+	return nil
+}
+
+func (t *target) withhold(ctx context.Context) error {
+	if err := t.sticky(ctx, withheldBody, status.Failed); err != nil {
+		return err
+	}
+	t.finish(ctx, status.Failed)
+	return nil
+}
+
+func (t *target) finish(ctx context.Context, state status.State) {
+	if t.rep != nil {
+		t.rep.Set(ctx, state)
+	}
+}
+
+func (t *target) fail(ctx context.Context) {
+	if t.rep != nil {
+		t.rep.Fail(ctx)
+	}
 }
 
 func loadArtifacts(ws *artifact.Workspace) (*review.Review, map[string]map[string]bool, map[string]map[string]bool, error) {
@@ -264,7 +368,7 @@ func postSticky(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, pr
 			return nil
 		}
 	}
-	if err := gh.CreateComment(ctx, repo, pr, body); err != nil {
+	if _, err := gh.CreateComment(ctx, repo, pr, body); err != nil {
 		return fmt.Errorf("creating the Paco summary comment: %w", err)
 	}
 	progress.New(nil, []string{gh.Token()}).Line("Publication: summary comment created")

@@ -58,7 +58,6 @@ func (f *fakeGitHub) file(path, ref, content string) {
 // happyPath registers everything a successful run touches with no feedback.
 func happyPath(f *fakeGitHub, diff string) {
 	f.json("GET /repos/owner/repo", `{"id":1}`)
-	f.json("POST /repos/owner/repo/issues/1/reactions", `{}`)
 	f.pullRequest("main", diff)
 	f.json("POST /graphql", `{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
 	f.json("GET /repos/owner/repo/pulls/1/reviews", `[]`)
@@ -155,8 +154,9 @@ func TestRunSuccess(t *testing.T) {
 	ws := t.TempDir()
 	f, c := newFakeGitHub(t)
 	happyPath(f, simpleDiff)
+	pr := f.PR("paco[bot]")
 
-	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: c}))
+	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: c, StatusLabels: true}))
 
 	assert.Assert(t, !fileExists(filepath.Join(ws, artifact.FileError)))
 	for _, name := range []string{artifact.FileDiff, artifact.FileValidLines, artifact.FileExistingInline, artifact.FileExistingFeedback} {
@@ -166,23 +166,36 @@ func TestRunSuccess(t *testing.T) {
 	assert.Equal(t, string(headSHA), "abc123")
 	validLines, _ := os.ReadFile(filepath.Join(ws, artifact.FileValidLines))
 	assert.Equal(t, string(validLines), `{"a.go":{"1":true,"2":true}}`)
-	assert.Assert(t, f.called("POST /repos/owner/repo/issues/1/reactions"), "eyes reaction on the PR")
+	assert.DeepEqual(t, pr.ReactionsBy("pr", "paco[bot]"), []string{"rocket"})
+	assert.DeepEqual(t, pr.Labels, []string{"paco/reviewing"})
+	assert.Equal(t, len(pr.Comments), 1)
+	assert.Assert(t, strings.HasPrefix(pr.Comments[0].Body, "<!-- paco-review -->\n<!-- paco-status run=local-"), pr.Comments[0].Body)
+	claim, _ := os.ReadFile(filepath.Join(ws, artifact.FileClaim))
+	assert.Assert(t, strings.Contains(string(claim), `"claimed":true`), string(claim))
 }
 
 func TestRunReactsToTriggerComment(t *testing.T) {
 	f, c := newFakeGitHub(t)
 	happyPath(f, simpleDiff)
-	var content string
-	f.Handle("POST /repos/owner/repo/issues/comments/55/reactions", func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]string
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		content = body["content"]
-		_, _ = io.WriteString(w, `{}`)
-	})
+	pr := f.PR("paco[bot]")
 
-	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, CommentID: "55", Workspace: t.TempDir(), GitHub: c}))
-	assert.Equal(t, content, "eyes")
-	assert.Assert(t, !f.called("POST /repos/owner/repo/issues/1/reactions"))
+	assert.NilError(t, Run(context.Background(), Options{
+		Repo: "owner/repo", PRNumber: 1, CommentID: "55", RunID: "run-a", Workspace: t.TempDir(), GitHub: c,
+	}))
+	assert.DeepEqual(t, pr.ReactionsBy("55", "paco[bot]"), []string{"rocket"})
+	assert.Equal(t, len(pr.ReactionsBy("pr", "paco[bot]")), 0)
+	assert.Assert(t, strings.Contains(pr.Comments[0].Body, "run=run-a comment=55 state=fetching"), pr.Comments[0].Body)
+}
+
+func TestRunSkipLeavesTheRunFetching(t *testing.T) {
+	f, c := newFakeGitHub(t)
+	happyPath(f, strings.Repeat("x", maxDiffBytes+1))
+	pr := f.PR("paco[bot]")
+	ws := t.TempDir()
+
+	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: c}))
+	assert.Assert(t, fileExists(filepath.Join(ws, artifact.FileError)))
+	assert.DeepEqual(t, pr.ReactionsBy("pr", "paco[bot]"), []string{"eyes"})
 }
 
 func TestRunRedactsCredentials(t *testing.T) {

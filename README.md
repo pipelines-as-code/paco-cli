@@ -18,9 +18,16 @@ paco post   --repo owner/repo --pr 42 --workspace /workspace/source
 - `paco review` builds the prompt, calls Claude, and normalizes the
   findings.
 - `paco post` updates the summary comment, labels, and inline review.
+- `paco status --state=failed` marks a run that died before `post` as
+  failed; the pipeline runs it in a `finally` task.
 - `paco version` prints the build version.
 
-`diff` and `post` read the GitHub token from `GH_TOKEN` or
+While it runs, Paco shows its progress as a reaction on the trigger
+comment, a `paco/reviewing`, `paco/clean`, `paco/findings` or
+`paco/failed` label, and a banner in the summary comment. See
+[Review status](docs/cli-contract.md#review-status).
+
+`diff`, `post` and `status` read the GitHub token from `GH_TOKEN` or
 `GITHUB_TOKEN`. `review` uses the Anthropic API when
 `ANTHROPIC_API_KEY` is set, otherwise Vertex AI with
 `GOOGLE_APPLICATION_CREDENTIALS`.

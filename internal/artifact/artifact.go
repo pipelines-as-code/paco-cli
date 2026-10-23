@@ -21,6 +21,7 @@ const (
 	FileReviewRules      = ".tekton/ai/REVIEW.md"
 	FileToolchains       = ".toolchain-versions"
 	FileSource           = ".paco-source.json"
+	FileClaim            = ".paco-claim.json"
 )
 
 type Workspace struct {

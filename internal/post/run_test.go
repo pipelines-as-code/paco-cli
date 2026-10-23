@@ -1,6 +1,7 @@
 package post
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -348,4 +349,159 @@ func TestRunConfigErrors(t *testing.T) {
 			assert.ErrorContains(t, err, tt.want)
 		})
 	}
+}
+
+const bot = "paco[bot]"
+
+// claimedRun simulates a PR where diff for run-a claimed the review comment.
+func claimedRun(t *testing.T, f *ghtest.Fake, files map[string]string) *ghtest.PR {
+	t.Helper()
+	pr := f.PR(bot)
+	pr.AddComment(bot, marker+"\n<!-- paco-status run=run-a comment=pr state=fetching -->\nprevious review")
+	pr.AddReaction("pr", bot, "rocket")
+	pr.Labels = []string{"paco/reviewing"}
+	files[artifact.FileClaim] = `{"run_id":"run-a","claimed":true,"prior":"unowned"}`
+	return pr
+}
+
+func TestRunReportsTerminalState(t *testing.T) {
+	inline := []map[string]any{{"path": "a.go", "line": 10, "severity": "low", "body": "x"}}
+	tests := []struct {
+		name     string
+		change   func(files map[string]string, f *ghtest.Fake)
+		comments []map[string]any
+		reaction string
+		labels   []string
+	}{
+		{name: "clean", reaction: "+1", labels: []string{"paco/clean"}},
+		{name: "findings", comments: inline, reaction: "-1", labels: []string{"paco/findings"}},
+		{name: "summary", comments: inline, reaction: "hooray", change: func(files map[string]string, _ *ghtest.Fake) {
+			files[artifact.FileMode] = "summary"
+		}},
+		{name: "failed review", reaction: "confused", labels: []string{"paco/failed"}, change: func(files map[string]string, _ *ghtest.Fake) {
+			files[artifact.FileFailed] = ""
+		}},
+		{name: "withheld", reaction: "confused", labels: []string{"paco/failed"}, change: func(files map[string]string, _ *ghtest.Fake) {
+			files[artifact.FileSecurityBlock] = ""
+		}},
+		{name: "inline publication failed", comments: inline, reaction: "confused", labels: []string{"paco/failed"}, change: func(_ map[string]string, f *ghtest.Fake) {
+			f.Status("POST "+reviewsPath, http.StatusUnprocessableEntity, `{}`)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, gh := ghtest.New(t)
+			happy(f)
+			files := defaultArtifacts(t, map[string]any{"summary": "s", "comments": tt.comments})
+			pr := claimedRun(t, f, files)
+			if tt.change != nil {
+				tt.change(files, f)
+			}
+			ws := workspace(t, files)
+
+			assert.NilError(t, Run(context.Background(), Options{
+				Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: gh, StatusLabels: true,
+			}))
+			assert.DeepEqual(t, pr.ReactionsBy("pr", bot), []string{tt.reaction})
+			var status []string
+			for _, l := range pr.Labels {
+				if !strings.HasPrefix(l, "paco/review-") {
+					status = append(status, l)
+				}
+			}
+			assert.DeepEqual(t, status, tt.labels)
+			assert.Equal(t, len(pr.Comments), 1)
+			body := pr.Comments[0].Body
+			state := map[string]string{"+1": "clean", "-1": "findings", "hooray": "summarized", "confused": "failed"}[tt.reaction]
+			assert.Assert(t, strings.HasPrefix(body, marker+"\n<!-- paco-status run=run-a comment=pr state="+state+" -->\n## Paco Review"), body)
+			assert.Assert(t, !strings.Contains(body, "previous review"))
+		})
+	}
+}
+
+func TestRunVerifiedReportsState(t *testing.T) {
+	for _, inlineFails := range []bool{false, true} {
+		f, gh := ghtest.New(t)
+		happy(f)
+		f.JSON("GET /repos/owner/repo/pulls/1", `{"head":{"sha":"abc123"},"base":{"ref":"main","sha":"def456"}}`)
+		if inlineFails {
+			f.Status("POST "+reviewsPath, http.StatusUnprocessableEntity, `{}`)
+		}
+		files := verifiedArtifacts(t)
+		pr := claimedRun(t, f, files)
+		ws := workspace(t, files)
+
+		err := Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: gh})
+		want := "-1"
+		if inlineFails {
+			assert.ErrorContains(t, err, "inline publication failed")
+			want = "confused"
+			assert.Assert(t, strings.Contains(pr.Comments[0].Body, "state=failed"), pr.Comments[0].Body)
+			assert.Assert(t, strings.Contains(pr.Comments[0].Body, "not confirmed posted"))
+		} else {
+			assert.NilError(t, err)
+			assert.Assert(t, strings.Contains(pr.Comments[0].Body, "state=findings"))
+		}
+		assert.DeepEqual(t, pr.ReactionsBy("pr", bot), []string{want})
+	}
+}
+
+func TestRunDoesNotOverwriteANewerRun(t *testing.T) {
+	newer := marker + "\n<!-- paco-status run=run-b comment=pr state=clean -->\nnewer review"
+	for _, claim := range []string{
+		`{"run_id":"run-a","claimed":true,"prior":"unowned"}`,
+		`{"run_id":"run-a","claimed":false,"prior":"unowned"}`,
+	} {
+		f, gh := ghtest.New(t)
+		happy(f)
+		pr := f.PR(bot)
+		id := pr.AddComment(bot, newer)
+		files := defaultArtifacts(t, map[string]any{"summary": "s"})
+		files[artifact.FileClaim] = claim
+		var logs bytes.Buffer
+
+		assert.NilError(t, Run(context.Background(), Options{
+			Repo: "owner/repo", PRNumber: 1, Workspace: workspace(t, files), GitHub: gh, LogWriter: &logs,
+		}))
+		assert.Equal(t, len(f.Writes()), 0, claim)
+		assert.Equal(t, pr.Body(id), newer)
+		assert.Assert(t, strings.Contains(logs.String(), "a newer Paco run owns the review comment"))
+	}
+}
+
+func TestRunUnclaimedButUnchangedPublishes(t *testing.T) {
+	f, gh := ghtest.New(t)
+	happy(f)
+	pr := f.PR(bot)
+	id := pr.AddComment(bot, marker+"\nold review")
+	files := defaultArtifacts(t, map[string]any{"summary": "s"})
+	files[artifact.FileClaim] = `{"run_id":"run-a","claimed":false,"prior":"unowned"}`
+
+	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: workspace(t, files), GitHub: gh}))
+	assert.Assert(t, strings.Contains(pr.Body(id), "run=run-a comment=pr state=clean"), pr.Body(id))
+}
+
+func TestRunOwnershipReadFailureReturnsError(t *testing.T) {
+	f, gh := ghtest.New(t)
+	happy(f)
+	files := defaultArtifacts(t, map[string]any{"summary": "s"})
+	pr := claimedRun(t, f, files)
+	pr.Fail["GET "+commentsPath] = http.StatusInternalServerError
+
+	err := Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: workspace(t, files), GitHub: gh})
+	assert.ErrorContains(t, err, "listing pull request comments")
+	assert.Equal(t, len(f.Writes()), 0)
+}
+
+func TestRunWithMismatchedRunIDPublishesWithoutStatus(t *testing.T) {
+	f, gh := ghtest.New(t)
+	happy(f)
+	files := defaultArtifacts(t, map[string]any{"summary": "s"})
+	pr := claimedRun(t, f, files)
+
+	assert.NilError(t, Run(context.Background(), Options{
+		Repo: "owner/repo", PRNumber: 1, Workspace: workspace(t, files), GitHub: gh, RunID: "run-z",
+	}))
+	assert.DeepEqual(t, pr.ReactionsBy("pr", bot), []string{"rocket"})
+	assert.Assert(t, strings.HasPrefix(pr.Comments[0].Body, marker+"\n## Paco Review"), pr.Comments[0].Body)
 }

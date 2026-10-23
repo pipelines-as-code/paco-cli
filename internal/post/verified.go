@@ -10,13 +10,14 @@ import (
 	"strings"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
-	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
 	"github.com/pipelines-as-code/paco-cli/internal/progress"
 	"github.com/pipelines-as-code/paco-cli/internal/review"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
+	paco "github.com/pipelines-as-code/paco-cli/internal/status"
 )
 
-func postVerified(ctx context.Context, ws *artifact.Workspace, gh *ghclient.Client, repo ghclient.Repo, pr int, rev *review.Review, log *progress.Logger) error {
+func postVerified(ctx context.Context, ws *artifact.Workspace, t *target, rev *review.Review, log *progress.Logger) error {
+	gh, repo, pr := t.gh, t.repo, t.pr
 	data, err := ws.Read(artifact.FileReview)
 	if err != nil {
 		return err
@@ -54,10 +55,11 @@ func postVerified(ctx context.Context, ws *artifact.Workspace, gh *ghclient.Clie
 		if len(rev.Comments) != 0 || len(rev.SummaryFindings) != 0 {
 			return errors.New("failed verification contains publishable findings")
 		}
-		if err := postSticky(ctx, gh, repo, pr, marker+"\n## Paco Review\n\nVerification failed. No findings published.\n\n"+rev.Summary); err != nil {
+		if err := t.sticky(ctx, marker+"\n## Paco Review\n\nVerification failed. No findings published.\n\n"+rev.Summary, paco.Failed); err != nil {
 			return err
 		}
 		log.Line("Publication completed: failed verification summary posted; no findings published")
+		t.finish(ctx, paco.Failed)
 		return nil
 	}
 	validData, err := ws.Read(artifact.FileValidLines)
@@ -107,14 +109,18 @@ func postVerified(ctx context.Context, ws *artifact.Workspace, gh *ghclient.Clie
 	if reason := security.ScanSecrets(body, gh.Token()); reason != "" {
 		return errors.New("verified summary contains credential-shaped content; publication withheld")
 	}
-	if err := postSticky(ctx, gh, repo, pr, body); err != nil {
+	state := paco.Clean
+	if status.Accepted > 0 {
+		state = paco.Findings
+	}
+	if err := t.sticky(ctx, body, state); err != nil {
 		return err
 	}
 	if len(inline) > 0 && status.Posted == 0 {
 		if err := gh.CreateReview(ctx, repo, pr, status.HeadSHA,
 			"Paco verified findings; see the summary for coverage limitations.", inline); err != nil {
 			log.Line("Verified inline publication failed: %s", err.Error())
-			if noteErr := postSticky(ctx, gh, repo, pr, body+"\n\nInline publication failed; the verified findings were not confirmed posted."); noteErr != nil {
+			if noteErr := t.sticky(ctx, body+"\n\nInline publication failed; the verified findings were not confirmed posted.", paco.Failed); noteErr != nil {
 				return fmt.Errorf("inline publication and summary update failed: %s", security.Scrub(noteErr.Error(), gh.Token()))
 			}
 			return errors.New("verified inline publication failed; check the run logs before retrying")
@@ -126,6 +132,7 @@ func postVerified(ctx context.Context, ws *artifact.Workspace, gh *ghclient.Clie
 	}
 	log.Line("Publication completed: summary posted; %d inline findings published; %d summary-only findings; coverage %s", status.Posted, status.Unanchored, status.State)
 	applyLabels(ctx, gh, repo, pr, rev.ReviewScore.Rating, rev.SecuritySensitive)
+	t.finish(ctx, state)
 	return nil
 }
 

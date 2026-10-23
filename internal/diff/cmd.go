@@ -105,7 +105,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	if rep != nil {
-		rep.Progress(ctx, status.Fetching)
+		rep.Update(ctx, status.Fetching)
 	}
 
 	refs, err := gh.PullRequestMetadata(ctx, repo, pr)
@@ -260,7 +260,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	if rep != nil {
-		rep.Progress(ctx, status.Reviewing)
+		rep.Update(ctx, status.Reviewing)
 	}
 
 	fmt.Printf("Existing feedback digest: %d bytes\n", len(feedbackDigest))

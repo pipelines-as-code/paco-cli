@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -467,6 +468,29 @@ func TestRunDoesNotOverwriteANewerRun(t *testing.T) {
 		assert.Equal(t, pr.Body(id), newer)
 		assert.Assert(t, strings.Contains(logs.String(), "a newer Paco run owns the review comment"))
 	}
+}
+
+func TestRunCancelledDuringInlinePublicationLeavesTheNewerRunAlone(t *testing.T) {
+	f, gh := ghtest.New(t)
+	happy(f)
+	files := defaultArtifacts(t, map[string]any{"summary": "s", "comments": []map[string]any{{"path": "a.go", "line": 10, "severity": "low", "body": "x"}}})
+	pr := claimedRun(t, f, files)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	id := pr.Comments[0].ID
+	newer := marker + "\n<!-- paco-status run=run-b comment=pr state=reviewing -->\nnewer"
+	f.Handle("POST "+reviewsPath, func(w http.ResponseWriter, _ *http.Request) {
+		pr.SetBody(id, newer)
+		cancel()
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	})
+
+	assert.NilError(t, Run(ctx, Options{
+		Repo: "owner/repo", PRNumber: 1, Workspace: workspace(t, files), GitHub: gh, StatusLabels: true,
+	}))
+	assert.Equal(t, pr.Body(id), newer)
+	assert.DeepEqual(t, pr.ReactionsBy("pr", bot), []string{"rocket"})
+	assert.Assert(t, !slices.Contains(pr.Labels, "paco/failed"), pr.Labels)
 }
 
 func TestRunUnclaimedButUnchangedPublishes(t *testing.T) {

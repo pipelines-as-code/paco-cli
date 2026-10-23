@@ -191,7 +191,8 @@ func ReadClaim(ws *artifact.Workspace) (Claim, bool) {
 // banner, creating the comment when there is none yet.
 func (r *Reporter) Claim(ctx context.Context) Claim {
 	c := Claim{RunID: r.runID}
-	ctx, cancel := bounded(ctx)
+	// Unlike reporting, taking ownership stops when the run is cancelled.
+	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	comments, err := r.gh.IssueComments(ctx, r.repo, r.pr)
 	if err != nil {

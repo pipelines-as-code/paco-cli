@@ -139,6 +139,9 @@ type collector struct {
 
 // add keeps one regular UTF-8 text file, counting skipped files as excluded.
 func (c *collector) add(name string, regular bool, size int64, read func() ([]byte, error)) error {
+	if dependencyPath(name) {
+		return nil
+	}
 	if !regular || excludedPath(name) || size > maxFileBytes || security.ScanSecrets(name, c.secrets...) != "" {
 		c.s.Excluded++
 		return nil
@@ -231,10 +234,28 @@ func safePath(name string) bool {
 	return name != "." && fs.ValidPath(name) && !strings.ContainsAny(name, "\\\r\n\t\x00")
 }
 
-func excludedPath(name string) bool {
+// dependencyNote tells the model that third-party code is never in a snapshot.
+const dependencyNote = "Dependency directories (vendor, node_modules, .venv, __pycache__) are never included."
+
+// dependencyPath matches third-party directories that every snapshot leaves
+// out on purpose; they are not counted as excluded, since that would mark
+// every review of a vendored repository as incomplete.
+func dependencyPath(name string) bool {
 	for _, part := range strings.Split(name, "/") {
 		switch strings.ToLower(part) {
-		case ".git", "node_modules", "vendor", ".venv", "__pycache__":
+		case "node_modules", "vendor", ".venv", "__pycache__":
+			return true
+		}
+	}
+	return false
+}
+
+func excludedPath(name string) bool {
+	if dependencyPath(name) {
+		return true
+	}
+	for _, part := range strings.Split(name, "/") {
+		if strings.EqualFold(part, ".git") {
 			return true
 		}
 	}

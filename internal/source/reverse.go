@@ -22,7 +22,7 @@ func Reverse(head *Snapshot, d *Diff, commit string) *Snapshot {
 	}
 	for _, file := range d.Files {
 		switch {
-		case file.Status == "added" || file.Status == "copied":
+		case file.Status == "added" || file.Status == "copied", dependencyPath(file.OldPath):
 			continue
 		case file.Binary || !safePath(file.OldPath) || excludedPath(file.OldPath):
 			before.Excluded++

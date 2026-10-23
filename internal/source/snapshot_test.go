@@ -66,7 +66,8 @@ func TestSnapshotFiltersAndRedacts(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Equal(t, s.Commit, "sha")
 	assert.Equal(t, len(s.Files), 2)
-	assert.Equal(t, s.Excluded, 7)
+	// Vendored code is skipped without counting as missing coverage.
+	assert.Equal(t, s.Excluded, 6)
 	assert.Equal(t, s.Files["a.go"], "package a\n// [REDACTED]\n")
 	assert.Equal(t, s.Files["keys.txt"], "[REDACTED]")
 	encoded, err := json.Marshal(s)

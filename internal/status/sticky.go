@@ -243,23 +243,32 @@ func (r *Reporter) Resolve(ctx context.Context, c Claim) (*Sticky, bool, error) 
 	}
 }
 
+const cutNote = "\n\n_This summary was cut to fit GitHub's comment size limit._"
+
 // Publish writes post's final body, which starts with Marker, under this
-// run's header.
+// run's header. The header is kept and the summary cut when both do not fit.
 func (r *Reporter) Publish(ctx context.Context, st *Sticky, body string, s State) (*Sticky, error) {
-	full := compose(r.header(s), "", strings.TrimPrefix(strings.TrimPrefix(body, Marker), "\n"))
+	h := r.header(s)
+	rest := strings.TrimPrefix(strings.TrimPrefix(body, Marker), "\n")
+	full := compose(h, "", rest)
+	if !fits(full) {
+		keep := maxCommentChars - utf8.RuneCountInString(compose(h, "", "")+cutNote)
+		full = compose(h, "", string([]rune(rest)[:keep])+cutNote)
+		r.log.Line("Warning: the summary was cut to fit GitHub's comment size limit")
+	}
 	if st == nil {
 		id, err := r.gh.CreateComment(ctx, r.repo, r.pr, full)
 		if err != nil {
 			return nil, fmt.Errorf("creating the Paco summary comment: %w", err)
 		}
 		r.log.Line("Publication: summary comment created")
-		return &Sticky{ID: id, Body: full, Header: r.header(s), HasHeader: true}, nil
+		return &Sticky{ID: id, Body: full, Header: h, HasHeader: true}, nil
 	}
 	if err := r.gh.UpdateComment(ctx, r.repo, st.ID, full); err != nil {
 		return nil, fmt.Errorf("updating the Paco summary comment: %w", err)
 	}
 	r.log.Line("Publication: summary comment updated")
-	return &Sticky{ID: st.ID, Body: full, Header: r.header(s), HasHeader: true}, nil
+	return &Sticky{ID: st.ID, Body: full, Header: h, HasHeader: true}, nil
 }
 
 // Fail marks the run as failed, but only while it owns the sticky comment, so
@@ -268,14 +277,8 @@ func (r *Reporter) Publish(ctx context.Context, st *Sticky, body string, s State
 func (r *Reporter) Fail(ctx context.Context) {
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	comments, err := r.gh.IssueComments(ctx, r.repo, r.pr)
-	if err != nil {
-		r.warn("read the review comment", err)
-		return
-	}
-	st := findSticky(comments, r.login, r.runID)
-	if !st.owner(r.runID) {
-		r.log.Line("Status: this run does not own the review comment; leaving the pull request unchanged")
+	st, ok := r.owned(ctx)
+	if !ok {
 		return
 	}
 	if st.Header.State != Failed {
@@ -285,4 +288,29 @@ func (r *Reporter) Fail(ctx context.Context) {
 		}
 	}
 	r.Set(ctx, Failed)
+}
+
+// Progress sets an in-progress state only while this run owns the review
+// comment, so a slower older run never marks a newer review as in progress.
+func (r *Reporter) Progress(ctx context.Context, s State) {
+	ctx, cancel := bounded(ctx)
+	defer cancel()
+	if _, ok := r.owned(ctx); ok {
+		r.Set(ctx, s)
+	}
+}
+
+// owned returns the review comment when this run owns it.
+func (r *Reporter) owned(ctx context.Context) (*Sticky, bool) {
+	comments, err := r.gh.IssueComments(ctx, r.repo, r.pr)
+	if err != nil {
+		r.warn("read the review comment", err)
+		return nil, false
+	}
+	st := findSticky(comments, r.login, r.runID)
+	if !st.owner(r.runID) {
+		r.log.Line("Status: this run does not own the review comment; leaving the pull request unchanged")
+		return nil, false
+	}
+	return st, true
 }

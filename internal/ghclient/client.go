@@ -361,6 +361,11 @@ func (c *Client) UpdateComment(ctx context.Context, r Repo, id int64, body strin
 	return err
 }
 
+func (c *Client) DeleteComment(ctx context.Context, r Repo, id int64) error {
+	_, err := c.rest.Issues.DeleteComment(ctx, r.Owner, r.Name, id)
+	return err
+}
+
 // Permission returns the user's permission on the repository
 // (admin, write, read or none).
 func (c *Client) Permission(ctx context.Context, r Repo, login string) (string, error) {

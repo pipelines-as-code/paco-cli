@@ -3,6 +3,7 @@ package ghtest
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,6 +141,10 @@ func (p *PR) serve(w http.ResponseWriter, r *http.Request, body string) bool {
 			}
 		}
 		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, repoPath+"/issues/comments/") && !strings.Contains(path, "/reactions"):
+		id, _ := strconv.ParseInt(strings.TrimPrefix(path, repoPath+"/issues/comments/"), 10, 64)
+		p.Comments = slices.DeleteFunc(p.Comments, func(c Comment) bool { return c.ID == id })
+		w.WriteHeader(http.StatusNoContent)
 	case strings.Contains(path, "/reactions"):
 		return p.reactions(w, r, body)
 	case strings.HasPrefix(path, issuePath+"/labels"), r.Method == http.MethodPost && path == repoPath+"/labels":

@@ -74,24 +74,17 @@ func (st *Sticky) fingerprint() string {
 }
 
 // findSticky only trusts comments written by the bot itself, so a marker
-// pasted by someone else is ignored. It prefers the comment owned by runID:
-// two runs that start on a PR at once may each create one.
-func findSticky(comments []ghclient.IssueComment, login, runID string) *Sticky {
-	var first *Sticky
+// pasted by someone else is ignored. The oldest one is the review comment.
+func findSticky(comments []ghclient.IssueComment, login string) *Sticky {
 	for _, c := range comments {
 		if !strings.EqualFold(c.Login, login) || !strings.HasPrefix(c.Body, Marker) {
 			continue
 		}
 		st := &Sticky{ID: c.ID, Body: c.Body}
 		st.Header, st.HasHeader = parseHeader(c.Body)
-		if st.owner(runID) {
-			return st
-		}
-		if first == nil {
-			first = st
-		}
+		return st
 	}
-	return first
+	return nil
 }
 
 func (st *Sticky) owner(runID string) bool {
@@ -199,11 +192,14 @@ func (r *Reporter) Claim(ctx context.Context) Claim {
 		r.warn("read the review comment", err)
 		return c
 	}
-	st := findSticky(comments, r.login, r.runID)
+	st := findSticky(comments, r.login)
 	c.Prior = st.fingerprint()
 	h := r.header(Fetching)
 	if st == nil {
-		_, err = r.gh.CreateComment(ctx, r.repo, r.pr, compose(h, reviewingBanner(false), ""))
+		var id int64
+		if id, err = r.gh.CreateComment(ctx, r.repo, r.pr, compose(h, reviewingBanner(false), "")); err == nil {
+			return r.dedupe(ctx, c, id)
+		}
 	} else {
 		rest := content(st.Body)
 		body := withBanner(h, reviewingBanner(rest != ""), rest)
@@ -221,6 +217,27 @@ func (r *Reporter) Claim(ctx context.Context) Claim {
 	return c
 }
 
+// dedupe handles two first runs that each created a review comment. The run
+// whose comment is newer deletes it and carries on as if its claim had
+// failed, so a single comment drives the pull request's status.
+func (r *Reporter) dedupe(ctx context.Context, c Claim, id int64) Claim {
+	c.Claimed = true
+	comments, err := r.gh.IssueComments(ctx, r.repo, r.pr)
+	if err != nil {
+		r.warn("check for a duplicate review comment", err)
+		return c
+	}
+	first := findSticky(comments, r.login)
+	if first == nil || first.ID == id {
+		return c
+	}
+	r.log.Line("Status: another Paco run created the review comment first; removing this run's copy")
+	r.warn("remove the duplicate review comment", r.gh.DeleteComment(ctx, r.repo, id))
+	c.Claimed = false
+	c.Prior = first.fingerprint()
+	return c
+}
+
 // Resolve tells post whether this run may still publish and which comment to
 // update (nil creates one). A run publishes while it owns the comment, even
 // if its claim reported an error after GitHub applied it. One that could not
@@ -231,7 +248,7 @@ func (r *Reporter) Resolve(ctx context.Context, c Claim) (*Sticky, bool, error) 
 	if err != nil {
 		return nil, false, err
 	}
-	st := findSticky(comments, r.login, r.runID)
+	st := findSticky(comments, r.login)
 	switch {
 	case st == nil, st.owner(r.runID):
 		return st, true, nil
@@ -304,7 +321,7 @@ func (r *Reporter) owned(ctx context.Context) (*Sticky, bool) {
 		r.warn("read the review comment", err)
 		return nil, false
 	}
-	st := findSticky(comments, r.login, r.runID)
+	st := findSticky(comments, r.login)
 	if !st.owner(r.runID) {
 		r.log.Line("Status: this run does not own the review comment; leaving the pull request unchanged")
 		return nil, false

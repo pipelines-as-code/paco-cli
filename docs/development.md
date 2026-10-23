@@ -346,6 +346,5 @@ docker run --rm --entrypoint /ko-app/paco "$image" post --help
 ```
 
 Use `--platform=linux/arm64` on an arm64 host. The image runs as UID
-65532 and needs no shell. Both PipelineRun examples set `fsGroup: 65532`
-to make their shared emptyDir writable; restricted clusters may require
-a different filesystem group.
+65532 and needs no shell. The example PipelineRun shares an emptyDir
+between steps, which any user can write to, so it needs no `fsGroup`.

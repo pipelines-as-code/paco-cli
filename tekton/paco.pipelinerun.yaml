@@ -45,10 +45,6 @@ metadata:
 spec:
   pipelineRef:
     name: paco
-  taskRunTemplate:
-    podTemplate:
-      securityContext:
-        fsGroup: 65532
   params:
     # Filled in by Pipelines-as-Code; leave these as they are.
     - name: repo_owner

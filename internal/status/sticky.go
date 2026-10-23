@@ -241,8 +241,9 @@ func (r *Reporter) dedupe(ctx context.Context, c Claim, id int64) Claim {
 // Resolve tells post whether this run may still publish and which comment to
 // update (nil creates one). A run publishes while it owns the comment, even
 // if its claim reported an error after GitHub applied it. One that could not
-// claim it publishes only if nobody else claimed it since. Read errors are
-// returned, as before status reporting existed.
+// claim it publishes only if nobody else claimed it since, or if the run
+// that owned it then failed. Read errors are returned, as before status
+// reporting existed.
 func (r *Reporter) Resolve(ctx context.Context, c Claim) (*Sticky, bool, error) {
 	comments, err := r.gh.IssueComments(ctx, r.repo, r.pr)
 	if err != nil {
@@ -256,8 +257,12 @@ func (r *Reporter) Resolve(ctx context.Context, c Claim) (*Sticky, bool, error) 
 		return st, false, nil
 	case c.Prior == "":
 		return st, true, nil
+	case st.fingerprint() == c.Prior:
+		return st, true, nil
 	default:
-		return st, st.fingerprint() == c.Prior, nil
+		// The run it stepped back for failed, so this run's review replaces it.
+		m := headerRE.FindStringSubmatch(c.Prior)
+		return st, m != nil && st.HasHeader && st.Header.Run == m[1] && st.Header.State == Failed, nil
 	}
 }
 

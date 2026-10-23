@@ -163,6 +163,9 @@ func TestClaimNearTheSizeLimit(t *testing.T) {
 func TestResolveOwnership(t *testing.T) {
 	own := Header{Run: "run-a", Comment: "pr", State: Fetching}.String()
 	newer := Header{Run: "run-b", Comment: "pr", State: Clean}.String()
+	fetchingB := Header{Run: "run-b", Comment: "pr", State: Fetching}.String()
+	failedB := Header{Run: "run-b", Comment: "pr", State: Failed}.String()
+	failedC := Header{Run: "run-c", Comment: "pr", State: Failed}.String()
 	tests := []struct {
 		name    string
 		sticky  string // second line of the bot's comment; "" means no comment
@@ -174,6 +177,9 @@ func TestResolveOwnership(t *testing.T) {
 		{"claim failed, nobody else claimed", "## old review", Claim{Prior: "unowned"}, true},
 		{"claim failed, a newer run claimed", newer, Claim{Prior: "unowned"}, false},
 		{"claim failed before reading", newer, Claim{}, true},
+		{"stepped back for a run that then failed", failedB, Claim{Prior: fetchingB}, true},
+		{"stepped back for a run that then finished", newer, Claim{Prior: fetchingB}, false},
+		{"stepped back for a run, another one failed", failedC, Claim{Prior: fetchingB}, false},
 		{"claim reported an error but GitHub applied it", own, Claim{Prior: "none"}, true},
 		{"comment deleted since", "", Claim{Claimed: true}, true},
 	}

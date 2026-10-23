@@ -5,7 +5,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient/ghtest"
@@ -264,19 +263,14 @@ func TestUpdateNeedsOwnership(t *testing.T) {
 	}
 }
 
-func TestPublishCutsASummaryThatOnlyFitsWithoutTheHeader(t *testing.T) {
-	_, p, c := setup(t)
+func TestPublishRejectsASummaryThatOnlyFitsWithoutTheHeader(t *testing.T) {
+	f, _, c := setup(t)
 	r, _ := reporter(t, c, "run-a", "")
 	text := strings.Repeat("x", maxCommentChars-len(Marker)-1)
 
-	st, err := r.Publish(context.Background(), nil, Marker+"\n"+text, Clean)
-	assert.NilError(t, err)
-	body := p.Body(st.ID)
-	assert.Equal(t, utf8.RuneCountInString(body), maxCommentChars)
-	h, ok := parseHeader(body)
-	assert.Assert(t, ok)
-	assert.Equal(t, h.Run, "run-a")
-	assert.Assert(t, strings.HasSuffix(body, cutNote))
+	_, err := r.Publish(context.Background(), nil, Marker+"\n"+text, Clean)
+	assert.ErrorContains(t, err, "too large to post")
+	assert.Equal(t, len(f.Writes()), 0)
 }
 
 func TestCancelledRunDoesNotClaim(t *testing.T) {

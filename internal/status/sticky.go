@@ -207,7 +207,9 @@ func (r *Reporter) Claim(ctx context.Context) Claim {
 			r.log.Line("Warning: the review comment is too large to mark this run; leaving it unchanged")
 			return c
 		}
-		err = r.gh.UpdateComment(ctx, r.repo, st.ID, body)
+		if err = r.gh.UpdateComment(ctx, r.repo, st.ID, body); err == nil {
+			r.supersede(ctx, st.Header, h)
+		}
 	}
 	if err != nil {
 		r.warn("mark the review comment", err)
@@ -215,6 +217,16 @@ func (r *Reporter) Claim(ctx context.Context) Claim {
 	}
 	c.Claimed = true
 	return c
+}
+
+// supersede clears the progress reaction of an unfinished run this run took
+// over from, when it was triggered elsewhere: that run can no longer update it.
+func (r *Reporter) supersede(ctx context.Context, old, mine Header) {
+	if old.Run == "" || old.Run == r.runID || old.Comment == mine.Comment || (old.State != Fetching && old.State != Reviewing) {
+		return
+	}
+	id, _ := ghclient.ParseCommentID(old.Comment)
+	r.prune(ctx, id, "")
 }
 
 // dedupe handles two first runs that each created a review comment. The run

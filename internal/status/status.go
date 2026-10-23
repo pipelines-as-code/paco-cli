@@ -164,31 +164,43 @@ func (r *Reporter) Set(ctx context.Context, s State) {
 }
 
 // react adds the new reaction before removing the bot's previous status
-// reactions, so the trigger never shows none. Other users' reactions and
-// unrelated contents are left alone.
+// reactions, so the trigger never shows none.
 func (r *Reporter) react(ctx context.Context, s State) {
 	want := looks[s].reaction
-	var current []ghclient.Reaction
 	var err error
 	if r.commentID != 0 {
-		if _, err = r.gh.AddCommentReaction(ctx, r.repo, r.commentID, want); err == nil {
-			current, err = r.gh.CommentReactions(ctx, r.repo, r.commentID)
-		}
+		_, err = r.gh.AddCommentReaction(ctx, r.repo, r.commentID, want)
 	} else {
-		if _, err = r.gh.AddIssueReaction(ctx, r.repo, r.pr, want); err == nil {
-			current, err = r.gh.IssueReactions(ctx, r.repo, r.pr)
-		}
+		_, err = r.gh.AddIssueReaction(ctx, r.repo, r.pr, want)
 	}
 	if err != nil {
 		r.warn("set the "+want+" reaction", err)
 		return
 	}
+	r.prune(ctx, r.commentID, want)
+}
+
+// prune removes the bot's status reactions other than keep from a comment,
+// or from the pull request when commentID is 0. Other users' reactions and
+// unrelated contents are left alone.
+func (r *Reporter) prune(ctx context.Context, commentID int64, keep string) {
+	var current []ghclient.Reaction
+	var err error
+	if commentID != 0 {
+		current, err = r.gh.CommentReactions(ctx, r.repo, commentID)
+	} else {
+		current, err = r.gh.IssueReactions(ctx, r.repo, r.pr)
+	}
+	if err != nil {
+		r.warn("list reactions", err)
+		return
+	}
 	for _, rc := range current {
-		if !strings.EqualFold(rc.Login, r.login) || rc.Content == want || !isStatusReaction(rc.Content) {
+		if !strings.EqualFold(rc.Login, r.login) || rc.Content == keep || !isStatusReaction(rc.Content) {
 			continue
 		}
-		if r.commentID != 0 {
-			err = r.gh.DeleteCommentReaction(ctx, r.repo, r.commentID, rc.ID)
+		if commentID != 0 {
+			err = r.gh.DeleteCommentReaction(ctx, r.repo, commentID, rc.ID)
 		} else {
 			err = r.gh.DeleteIssueReaction(ctx, r.repo, r.pr, rc.ID)
 		}

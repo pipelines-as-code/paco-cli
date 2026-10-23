@@ -55,6 +55,17 @@ func (p *PR) AddComment(login, body string) int64 {
 	return p.nextID
 }
 
+// SetBody replaces a comment's body, as another run would.
+func (p *PR) SetBody(id int64, body string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.Comments {
+		if p.Comments[i].ID == id {
+			p.Comments[i].Body = body
+		}
+	}
+}
+
 // AddReaction seeds a reaction on target ("pr" or a comment ID).
 func (p *PR) AddReaction(target, login, content string) {
 	p.mu.Lock()

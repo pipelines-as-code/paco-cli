@@ -290,9 +290,9 @@ func (r *Reporter) Fail(ctx context.Context) {
 	r.Set(ctx, Failed)
 }
 
-// Progress sets an in-progress state only while this run owns the review
-// comment, so a slower older run never marks a newer review as in progress.
-func (r *Reporter) Progress(ctx context.Context, s State) {
+// Update sets s only while this run owns the review comment, so a slower or
+// cancelled older run never changes the status of a newer one.
+func (r *Reporter) Update(ctx context.Context, s State) {
 	ctx, cancel := bounded(ctx)
 	defer cancel()
 	if _, ok := r.owned(ctx); ok {

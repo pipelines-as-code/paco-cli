@@ -264,7 +264,7 @@ func (t *target) withhold(ctx context.Context) error {
 
 func (t *target) finish(ctx context.Context, state status.State) {
 	if t.rep != nil {
-		t.rep.Set(ctx, state)
+		t.rep.Update(ctx, state)
 	}
 }
 

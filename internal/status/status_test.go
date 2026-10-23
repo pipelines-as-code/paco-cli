@@ -244,7 +244,7 @@ func TestRunCommandRejectsBadFlagsBeforeAnyRequest(t *testing.T) {
 	assert.Equal(t, len(f.Calls("")), 0)
 }
 
-func TestProgressNeedsOwnership(t *testing.T) {
+func TestUpdateNeedsOwnership(t *testing.T) {
 	tests := []struct {
 		name   string
 		sticky string
@@ -258,7 +258,7 @@ func TestProgressNeedsOwnership(t *testing.T) {
 			p.AddComment(bot, Marker+"\n"+tt.sticky+"\nbody")
 			r, _ := reporter(t, c, "run-a", "55")
 
-			r.Progress(context.Background(), Reviewing)
+			r.Update(context.Background(), Reviewing)
 			assert.Equal(t, len(f.Writes()), 0)
 		})
 	}

@@ -304,3 +304,20 @@ func TestCancelledRunDoesNotClaim(t *testing.T) {
 	assert.Equal(t, p.Body(id), newer)
 	assert.Equal(t, len(f.Writes()), 0)
 }
+
+func TestClaimClearsTheProgressReactionOfASupersededTrigger(t *testing.T) {
+	for _, old := range []string{"55", "pr"} {
+		t.Run(old, func(t *testing.T) {
+			_, p, c := setup(t)
+			p.AddComment(bot, Marker+"\n"+Header{Run: "run-a", Comment: old, State: Reviewing}.String()+"\n")
+			p.AddReaction(old, bot, "rocket")
+			p.AddReaction(old, bot, "heart")
+			p.AddReaction(old, "alice", "rocket")
+			r, _ := reporter(t, c, "run-b", "56")
+
+			assert.Assert(t, r.Claim(context.Background()).Claimed)
+			assert.DeepEqual(t, p.ReactionsBy(old, bot), []string{"heart"})
+			assert.DeepEqual(t, p.ReactionsBy(old, "alice"), []string{"rocket"})
+		})
+	}
+}

@@ -32,8 +32,8 @@ func TestFromDir(t *testing.T) {
 		"main.go":     "package main\n",
 		"pkg/util.go": "package pkg // [REDACTED]\n",
 	})
-	// .git is skipped outright; vendor, binary and symlink count as excluded.
-	assert.Equal(t, s.Excluded, 3)
+	// .git and vendor are skipped outright; binary and symlink count as excluded.
+	assert.Equal(t, s.Excluded, 2)
 }
 
 const reverseDiff = `diff --git a/a.go b/a.go

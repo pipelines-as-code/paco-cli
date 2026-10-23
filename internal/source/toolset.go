@@ -78,9 +78,9 @@ func (t *Toolset) Call(ctx context.Context, name string, input json.RawMessage) 
 	if err != nil {
 		return "", err
 	}
-	output = strings.TrimPrefix(output, fmt.Sprintf("PR-head snapshot; %d files excluded during collection.\n", snapshot.Excluded))
-	return fmt.Sprintf("%s snapshot; %d files excluded during collection. Missing matches do not prove absence.\n%s",
-		revision, snapshot.Excluded, output), nil
+	output = strings.TrimPrefix(output, fmt.Sprintf("PR-head snapshot; %d files excluded during collection. %s\n", snapshot.Excluded, dependencyNote))
+	return fmt.Sprintf("%s snapshot; %d files excluded during collection. %s Missing matches do not prove absence.\n%s",
+		revision, snapshot.Excluded, dependencyNote, output), nil
 }
 
 func (t *Toolset) readDiff(input json.RawMessage) (string, error) {

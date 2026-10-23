@@ -133,7 +133,7 @@ func (s *Snapshot) call(ctx context.Context, name string, input json.RawMessage,
 		}
 		sort.Strings(paths)
 		var output strings.Builder
-		fmt.Fprintf(&output, "PR-head snapshot; %d files excluded during collection.\n", s.Excluded)
+		fmt.Fprintf(&output, "PR-head snapshot; %d files excluded during collection. %s\n", s.Excluded, dependencyNote)
 		hits := 0
 		add := func(line string) bool {
 			if hits >= 100 || output.Len()+len(line) > maxResultBytes {

@@ -157,7 +157,9 @@ The diff stays authoritative for anchors.
 regular UTF-8 text files in memory without extracting them to disk. It
 skips symlinks, hardlinks, binary files, files over 512 KiB, common
 credential files, and dependency directories such as `vendor` and
-`node_modules`.
+`node_modules`. Skipped dependency directories do not count as excluded
+files, so they do not mark the review's coverage as incomplete; the
+search tools tell Claude they are never included.
 
 Limits:
 

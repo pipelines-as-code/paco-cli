@@ -292,6 +292,29 @@ func TestRunInlineFailureAddsNote(t *testing.T) {
 	assert.Equal(t, second, first+"\n\n> [!NOTE]\n> Some inline comments could not be posted (a line number may fall outside the diff).")
 }
 
+func TestRunInlineFailureNoteTooLargeMarksTheRunFailed(t *testing.T) {
+	inline := []map[string]any{{"path": "a.go", "line": 10, "severity": "low", "body": "x"}}
+	run := func(summary string, reviewStatus int) *ghtest.PR {
+		f, gh := ghtest.New(t)
+		happy(f)
+		f.Status("POST "+reviewsPath, reviewStatus, `{}`)
+		files := defaultArtifacts(t, map[string]any{"summary": summary, "comments": inline})
+		pr := claimedRun(t, f, files)
+		assert.NilError(t, Run(context.Background(), Options{
+			Repo: "owner/repo", PRNumber: 1, Workspace: workspace(t, files), GitHub: gh, StatusLabels: true,
+		}))
+		return pr
+	}
+	overhead := len(run("s", http.StatusOK).Comments[0].Body) - 1
+	// The summary fits on its own, but not once the failure note is added.
+	pr := run(strings.Repeat("x", 65536-overhead-10), http.StatusUnprocessableEntity)
+
+	body := pr.Comments[0].Body
+	assert.Assert(t, strings.Contains(body, "state=failed"), body[:200])
+	assert.Assert(t, slices.Contains(pr.Labels, "paco/failed"), pr.Labels)
+	assert.DeepEqual(t, pr.ReactionsBy("pr", bot), []string{"confused"})
+}
+
 func TestRunWithholds(t *testing.T) {
 	tests := []struct {
 		name  string

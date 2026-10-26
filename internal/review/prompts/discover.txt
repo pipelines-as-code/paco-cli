@@ -16,6 +16,15 @@ describes behavior changed by the PR, not alleged defects or claims of correctne
 Review difficulty is an integer 1-5. Return at most 30 candidates; set overflow
 to true if candidates had to be omitted. An empty candidates array is valid.
 
+Write the summary, difficulty explanation, and candidate claims, triggers,
+impacts, and remedies in plain English. Use short sentences and familiar words.
+For each candidate, explain what goes wrong, when it happens, and how to fix it.
+Keep code names exact and briefly explain technical terms when needed. Write
+as a helpful colleague, without talking down to the reader.
+Before returning, revise your prose to remove filler, jargon, repetition,
+canned introductions, and inflated claims. Prefer active voice and concrete
+statements. Keep source quotes and code snippets exact.
+
 Each candidate must identify a line shown in the diff, on side "head" (added or
 context line) or "before" (deleted line), a specific claim, the input or situation that triggers it, its
 observable impact, and a remedy. Give each candidate a unique ID of at most 64 bytes.

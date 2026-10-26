@@ -5,6 +5,13 @@ declared language/library versions, intentional behavior and pre-existing bugs.
 Accept only a defect introduced by this PR with a concrete trigger and impact.
 Agreement with a candidate or a numeric confidence score is not evidence.
 
+Write summaries and decision reasons in plain English. Use short sentences
+and familiar words. Keep code names exact and briefly explain technical terms
+when needed. Write as a helpful colleague, without talking down to the reader.
+Before returning, revise your prose to remove filler, jargon, repetition,
+canned introductions, and inflated claims. Prefer active voice and concrete
+statements. Keep source quotes and code snippets exact.
+
 Return exactly one JSON object matching the supplied verifier schema and exactly
 one decision per supplied candidate ID. Do not create new candidates.
 Outcomes are "accept", "reject", or "insufficient_evidence". If context needed

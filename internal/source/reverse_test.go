@@ -33,8 +33,9 @@ func TestFromDir(t *testing.T) {
 		"main.go":     "package main\n",
 		"pkg/util.go": "package pkg // [REDACTED]\n",
 	})
-	// .git and dependency directories are not walked; binary and symlink count as excluded.
-	assert.Equal(t, s.Excluded, 2)
+	// .git and dependency directories are not walked; binary files and
+	// symlinks are skipped without counting as excluded.
+	assert.Equal(t, s.Excluded, 0)
 }
 
 func TestFromDirSkipsDependencyDirs(t *testing.T) {

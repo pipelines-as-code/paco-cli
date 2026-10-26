@@ -7,8 +7,9 @@ import (
 
 // Reverse rebuilds the old side of d by undoing it on head, for callers that
 // have a working tree but no access to the comparison revision. Files the
-// diff cannot reproduce exactly (binary, incomplete hunks, missing from head,
-// or mismatched content) are left out and counted as excluded.
+// diff cannot reproduce exactly (incomplete hunks, missing from head, or
+// mismatched content) are left out and counted as excluded; binary files are
+// left out silently, as in the head snapshot.
 func Reverse(head *Snapshot, d *Diff, commit string) *Snapshot {
 	before := &Snapshot{Commit: commit, Files: make(map[string]string, len(head.Files)), Excluded: head.Excluded}
 	for name, content := range head.Files {
@@ -22,9 +23,9 @@ func Reverse(head *Snapshot, d *Diff, commit string) *Snapshot {
 	}
 	for _, file := range d.Files {
 		switch {
-		case file.Status == "added" || file.Status == "copied", dependencyPath(file.OldPath):
+		case file.Status == "added" || file.Status == "copied", file.Binary, dependencyPath(file.OldPath):
 			continue
-		case file.Binary || !safePath(file.OldPath) || excludedPath(file.OldPath):
+		case !safePath(file.OldPath) || excludedPath(file.OldPath):
 			before.Excluded++
 			continue
 		}

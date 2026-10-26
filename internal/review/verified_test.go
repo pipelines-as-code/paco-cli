@@ -376,27 +376,83 @@ func TestVerifiedKeepsBothFeedbackForms(t *testing.T) {
 	assert.Assert(t, strings.Contains(sent, "Structured inline feedback"))
 }
 
-func TestToolCoverageTracksMissingAndTruncatedSource(t *testing.T) {
+func TestToolCoverageTracksUnreadableSource(t *testing.T) {
+	tooLong := "Some source lines were too long for Paco's read tools and were not reviewed."
 	tests := []struct {
-		name       string
-		content    string
-		input      string
-		incomplete bool
+		name    string
+		content string
+		tool    string
+		input   string
+		gaps    []string
 	}{
-		{name: "complete", content: "source", input: `{"path":"a.go","start_line":1,"end_line":1}`},
-		{name: "truncated", content: strings.Repeat("x", 16000), input: `{"path":"a.go","start_line":1,"end_line":1}`, incomplete: true},
-		{name: "unavailable", content: "source", input: `{"path":"missing.go","start_line":1,"end_line":1}`, incomplete: true},
+		{name: "complete", content: "source", tool: "read_file", input: `{"path":"a.go","start_line":1,"end_line":1}`},
+		{name: "paged", content: strings.Repeat(strings.Repeat("x", 100)+"\n", 200), tool: "read_file", input: `{"path":"a.go","start_line":1,"end_line":200}`},
+		{name: "invented path", content: "source", tool: "read_file", input: `{"path":"missing.go","start_line":1,"end_line":1}`},
+		{name: "source quoting a tool note", content: `msg := "exceeds the tool result limit and is unavailable"`, tool: "read_file", input: `{"path":"a.go","start_line":1,"end_line":1}`},
+		{name: "line too long only for search", content: strings.Repeat("x", 14900), tool: "search_code", input: `{"query":"x"}`},
+		{name: "oversized line", content: strings.Repeat("x", 16000), tool: "read_file", input: `{"path":"a.go","start_line":1,"end_line":1}`, gaps: []string{tooLong}},
+		{name: "missing diff", content: "source", tool: "read_diff", input: `{"path":"a.go"}`, gaps: []string{"The comparison diff was unavailable to Paco's read tools."}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tools := coverageTools{Toolset: &source.Toolset{Head: &source.Snapshot{Files: map[string]string{"a.go": tt.content}}}}
-			_, err := tools.Call(context.Background(), "read_file", json.RawMessage(tt.input))
-			if !tt.incomplete {
-				assert.NilError(t, err)
-			}
-			assert.Equal(t, tools.incomplete, tt.incomplete)
+			_, _ = tools.Call(context.Background(), tt.tool, json.RawMessage(tt.input))
+			_, _ = tools.Call(context.Background(), tt.tool, json.RawMessage(tt.input))
+			assert.DeepEqual(t, tools.gaps, tt.gaps)
 		})
 	}
+	readable := coverageTools{Toolset: &source.Toolset{Head: &source.Snapshot{Files: map[string]string{"a.go": strings.Repeat("x", 14900)}}}}
+	_, err := readable.Call(context.Background(), "read_file", json.RawMessage(`{"path":"a.go","start_line":1,"end_line":1}`))
+	assert.NilError(t, err, "a line too long for search must stay readable")
+}
+
+func TestCollectionLimitationIsExplained(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   []string
+	}{
+		{
+			name:   "exclusions explain partial context",
+			source: `{"commit":"head-sha","excluded":2,"files":{"a.go":"return a / b"}}`,
+			want:   []string{"Could not load 2 files at PR head head-sh because they were too large, looked like credentials, or could not be read."},
+		},
+		{name: "unexplained partial context", want: []string{"Paco could not collect all of the repository context."}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := verifiedWorkspace(t)
+			manifestPath := filepath.Join(ws, artifact.FileInputManifest)
+			data, err := os.ReadFile(manifestPath)
+			assert.NilError(t, err)
+			var manifest artifact.InputManifest
+			assert.NilError(t, json.Unmarshal(data, &manifest))
+			manifest.ContextStatus = "partial"
+			assert.NilError(t, os.WriteFile(manifestPath, []byte(jsonText(t, manifest)), 0o600))
+			if tt.source != "" {
+				assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileSource), []byte(tt.source), 0o600))
+			}
+			resolve, _ := reviewServer(t, []string{jsonText(t, discovery{
+				Summary: "Removes a guard.", ReviewScore: ReviewScore{2, "Small."}, Candidates: []Candidate{},
+			})})
+			assert.NilError(t, Run(context.Background(), Options{Workspace: ws, VerifyFindings: true, Resolve: resolve}))
+			data, err = os.ReadFile(filepath.Join(ws, artifact.FileReview))
+			assert.NilError(t, err)
+			status, err := ReadStatus(&artifact.Workspace{Dir: ws}, data)
+			assert.NilError(t, err)
+			assert.Equal(t, status.State, "partial")
+			assert.DeepEqual(t, status.Limitations, tt.want)
+		})
+	}
+}
+
+func TestExcludedLimitation(t *testing.T) {
+	head := &source.Snapshot{Commit: "b4be389eaeb16c141527e27a064763d4a6070f0b", Excluded: 3}
+	same := &source.Snapshot{Commit: "0db98de9ecffac723efabfc8ee2dfa5fd089e27f", Excluded: 3}
+	other := &source.Snapshot{Commit: "0db98de9ecffac723efabfc8ee2dfa5fd089e27f", Excluded: 1}
+	assert.Equal(t, excludedLimitation(&source.Snapshot{Commit: "x"}, nil), "")
+	assert.Equal(t, excludedLimitation(head, same), "Could not load 3 files at PR head b4be389 and base 0db98de because they were too large, looked like credentials, or could not be read.")
+	assert.Equal(t, excludedLimitation(head, other), "Could not load 3 files at PR head b4be389 and 1 file at base 0db98de because they were too large, looked like credentials, or could not be read.")
 }
 
 func TestNumberedSourcePreservesExactWhitespace(t *testing.T) {

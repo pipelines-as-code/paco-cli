@@ -106,7 +106,7 @@ func (t *Toolset) readDiff(input json.RawMessage) (string, error) {
 		return "", errors.New("hunk and offset must be positive")
 	}
 	if t.Diff == nil {
-		return "", errors.New("comparison diff is unavailable")
+		return "", &UnavailableError{message: "comparison diff is unavailable", Limitation: "The comparison diff was unavailable to Paco's read tools."}
 	}
 	for _, file := range t.Diff.Files {
 		if file.NewPath != args.Path && file.OldPath != args.Path {
@@ -117,7 +117,10 @@ func (t *Toolset) readDiff(input json.RawMessage) (string, error) {
 			header += fmt.Sprintf("File modes: old=%q new=%q\n", file.OldMode, file.NewMode)
 		}
 		if len(header) > maxResultBytes {
-			return "", errors.New("diff file metadata exceeds the tool result limit")
+			return "", &UnavailableError{
+				message:    "diff file metadata exceeds the tool result limit",
+				Limitation: "Some changed file paths were too long for Paco's read tools and their diff was not reviewed.",
+			}
 		}
 		if len(file.Hunks) == 0 {
 			return header + "No text hunks available.\n", nil
@@ -139,7 +142,11 @@ func (t *Toolset) readDiff(input json.RawMessage) (string, error) {
 				return "", err
 			}
 			if i-offset+1 >= 100 || output.Len()+len(encoded)+1 > maxResultBytes {
-				fmt.Fprintf(&output, "[Result truncated at hunk offset %d; use offset to continue. A single oversized line may be unavailable.]\n", i+1)
+				if i == offset-1 {
+					fmt.Fprintf(&output, "[Hunk line at offset %d is too long for read_diff; read it with read_file, or use offset %d to continue.]\n", i+1, i+2)
+					break
+				}
+				fmt.Fprintf(&output, "[Result truncated at hunk offset %d; use offset to continue.]\n", i+1)
 				break
 			}
 			output.Write(encoded)

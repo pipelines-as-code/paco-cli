@@ -211,7 +211,10 @@ strings when citing evidence. Local validation compares the quoted lines with
 the source ignoring indentation, trailing whitespace and runs of blanks; every
 other character has to match. A discovery candidate whose only defect is a
 misquoted line keeps its anchor and goes to the verifier without evidence,
-which must then cite the source itself. Single-pass source tools retain their
+which must then cite the source itself. A verifier decision with invalid
+evidence does not fail the review: an acceptance is treated as
+`insufficient_evidence` and is not published, and a rejection keeps its
+outcome without the citation. Single-pass source tools retain their
 existing text format.
 
 Both passes share the 900-second deadline and total allowance of 24 turns,

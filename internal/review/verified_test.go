@@ -135,6 +135,13 @@ func TestVerifiedReviewHTTP(t *testing.T) {
 			Summary:   discovered.Summary,
 			Decisions: []decision{{ID: c.ID, Outcome: "insufficient_evidence", Reason: "Caller is unavailable.", Evidence: []Evidence{}}},
 		})},
+		{name: "misquoted acceptance is unverified, not fatal", partial: true, response: jsonText(t, verdict{
+			Summary: discovered.Summary,
+			Decisions: []decision{{
+				ID: c.ID, Outcome: "accept", Reason: "Guard is removed.", Severity: "high",
+				Evidence: []Evidence{{Revision: "before", Path: "a.go", Start: 1, End: 1, Quote: `if b == 0 { return \"0\" }`}},
+			}},
+		})},
 		{name: "missing decisions fails closed", failed: true, response: `{"summary":"ok","decisions":[]}`},
 		{name: "malformed JSON fails closed", failed: true, response: `{`},
 		{name: "credential is withheld", failed: true, response: `{"summary":"test-model-key","decisions":[]}`},

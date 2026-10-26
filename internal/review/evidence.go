@@ -85,8 +85,9 @@ func (c evidenceContext) validate(refs []Evidence, path string, requireChanged b
 			lines = append(lines, line)
 			changed = changed || (ref.Path == path && c.changed[ref.Revision][ref.Path][n])
 		}
-		if !sameSource(ref.Quote, strings.Join(lines, "\n")) {
-			return errQuoteMismatch
+		if source := strings.Join(lines, "\n"); !sameSource(ref.Quote, source) {
+			return fmt.Errorf("%w: %s:%d-%d [%s] quoted %q, source is %q", errQuoteMismatch,
+				ref.Path, ref.Start, ref.End, ref.Revision, clip(ref.Quote), clip(source))
 		}
 	}
 	if requireChanged && !changed {
@@ -96,6 +97,13 @@ func (c evidenceContext) validate(refs []Evidence, path string, requireChanged b
 }
 
 var errQuoteMismatch = errors.New("evidence quote does not match source")
+
+func clip(text string) string {
+	if len(text) > 160 {
+		return text[:160] + "..."
+	}
+	return text
+}
 
 // sameSource compares quoted and actual source ignoring indentation, trailing
 // whitespace and runs of blanks inside a line. Models often retype tabs as
@@ -204,68 +212,86 @@ func objectEnd(text string) (int, bool) {
 	return int(decoder.InputOffset()), true
 }
 
-func parseVerdict(text string, candidates []Candidate, context evidenceContext) (verdict, error) {
+// parseVerdict validates the verifier response. A decision whose evidence does
+// not check out is downgraded rather than failing the whole review: an
+// accepted finding becomes insufficient_evidence so it is never published,
+// and a rejection keeps its outcome without the bad citation. The returned
+// notes describe each downgrade.
+func parseVerdict(text string, candidates []Candidate, context evidenceContext) (verdict, []string, error) {
 	var v verdict
+	var notes []string
 	text = responseObject(text)
 	if err := validateShape(text, verdictSchema()); err != nil {
-		return v, err
+		return v, nil, err
 	}
 
 	if err := decodeStrict(text, &v); err != nil {
-		return v, err
+		return v, nil, err
 	}
 	if strings.TrimSpace(v.Summary) == "" || len(v.Summary) > 6000 ||
 		v.Decisions == nil || len(v.Decisions) != len(candidates) {
-		return v, errors.New("verifier must return a summary and one decision per candidate")
+		return v, nil, errors.New("verifier must return a summary and one decision per candidate")
 	}
 	byID := map[string]Candidate{}
 	for _, c := range candidates {
 		byID[c.ID] = c
 	}
 	decisions := map[string]decision{}
-	for _, d := range v.Decisions {
+	downgraded := map[string]bool{}
+	for i := range v.Decisions {
+		d := &v.Decisions[i]
 		c, ok := byID[d.ID]
 		if !ok {
-			return v, errors.New("verifier returned an unknown candidate ID")
+			return v, nil, errors.New("verifier returned an unknown candidate ID")
 		}
 		if _, exists := decisions[d.ID]; exists {
-			return v, errors.New("verifier returned a duplicate candidate ID")
+			return v, nil, errors.New("verifier returned a duplicate candidate ID")
 		}
 		if strings.TrimSpace(d.Reason) == "" || len(d.Reason) > 2000 || d.Evidence == nil {
-			return v, errors.New("verifier decision requires a reason and evidence array")
+			return v, nil, errors.New("verifier decision requires a reason and evidence array")
 		}
 		switch d.Outcome {
 		case "accept":
 			if d.DuplicateOf != "" {
-				return v, errors.New("accepted candidate cannot be a duplicate")
+				return v, nil, errors.New("accepted candidate cannot be a duplicate")
 			}
 			if !validSeverities[d.Severity] {
-				return v, errors.New("accepted candidate requires a severity")
+				return v, nil, errors.New("accepted candidate requires a severity")
 			}
 			if err := context.validate(d.Evidence, c.Path, true); err != nil {
-				return v, fmt.Errorf("invalid verifier evidence: %w", err)
+				notes = append(notes, fmt.Sprintf("Candidate %s: verifier accepted it with invalid evidence, treating it as unverified: %s", d.ID, err))
+				d.Outcome, d.Severity, d.Evidence = "insufficient_evidence", "", []Evidence{}
+				downgraded[d.ID] = true
 			}
 		case "reject", "insufficient_evidence":
 			if len(d.Evidence) > 0 {
 				if err := context.validate(d.Evidence, c.Path, false); err != nil {
-					return v, fmt.Errorf("invalid verifier evidence: %w", err)
+					notes = append(notes, fmt.Sprintf("Candidate %s: verifier evidence discarded: %s", d.ID, err))
+					d.Evidence = []Evidence{}
 				}
 			}
 			if d.Outcome == "insufficient_evidence" && d.DuplicateOf != "" {
-				return v, errors.New("uncertain candidate cannot be marked duplicate")
+				return v, nil, errors.New("uncertain candidate cannot be marked duplicate")
 			}
 		default:
-			return v, errors.New("verifier returned an unknown outcome")
+			return v, nil, errors.New("verifier returned an unknown outcome")
 		}
-		decisions[d.ID] = d
+		decisions[d.ID] = *d
 	}
-	for _, d := range v.Decisions {
-		if d.DuplicateOf != "" {
-			target, ok := decisions[d.DuplicateOf]
-			if !ok || target.Outcome != "accept" || target.ID == d.ID {
-				return v, errors.New("duplicate must reference an accepted candidate")
-			}
+	for i := range v.Decisions {
+		d := &v.Decisions[i]
+		if d.DuplicateOf == "" {
+			continue
+		}
+		if downgraded[d.DuplicateOf] {
+			// The original it duplicates could not be verified, so neither can it.
+			d.Outcome, d.DuplicateOf = "insufficient_evidence", ""
+			continue
+		}
+		target, ok := decisions[d.DuplicateOf]
+		if !ok || target.Outcome != "accept" || target.ID == d.ID {
+			return v, nil, errors.New("duplicate must reference an accepted candidate")
 		}
 	}
-	return v, nil
+	return v, notes, nil
 }

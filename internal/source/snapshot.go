@@ -139,12 +139,14 @@ type collector struct {
 	total   int
 }
 
-// add keeps one regular UTF-8 text file, counting skipped files as excluded.
+// add keeps one regular UTF-8 text file. Links and binary files are skipped
+// silently because they hold no reviewable source; other skipped files count
+// as excluded.
 func (c *collector) add(name string, regular bool, size int64, read func() ([]byte, error)) error {
-	if dependencyPath(name) {
+	if dependencyPath(name) || !regular {
 		return nil
 	}
-	if !regular || excludedPath(name) || size > maxFileBytes || security.ScanSecrets(name, c.secrets...) != "" {
+	if excludedPath(name) || security.ScanSecrets(name, c.secrets...) != "" {
 		c.s.Excluded++
 		return nil
 	}
@@ -152,7 +154,11 @@ func (c *collector) add(name string, regular bool, size int64, read func() ([]by
 	if err != nil {
 		return fmt.Errorf("reading source file: %w", err)
 	}
-	if len(content) > maxFileBytes || !utf8.Valid(content) || bytes.ContainsRune(content, 0) || bytes.Contains(content, []byte("PRIVATE KEY-----")) {
+	oversized := size > maxFileBytes || len(content) > maxFileBytes
+	if binary(content, oversized) {
+		return nil
+	}
+	if oversized || bytes.Contains(content, []byte("PRIVATE KEY-----")) {
 		c.s.Excluded++
 		return nil
 	}
@@ -232,6 +238,19 @@ func ValidateCombined(head, before *Snapshot) error {
 	return nil
 }
 
+// binary reports content with a NUL byte or invalid UTF-8. A read cut at the
+// size limit may end inside a character, so up to three trailing bytes of a
+// truncated read are ignored.
+func binary(content []byte, truncated bool) bool {
+	if bytes.IndexByte(content, 0) >= 0 {
+		return true
+	}
+	for i := 1; truncated && i < utf8.UTFMax && !utf8.Valid(content) && len(content) > 0; i++ {
+		content = content[:len(content)-1]
+	}
+	return !utf8.Valid(content)
+}
+
 func safePath(name string) bool {
 	return name != "." && fs.ValidPath(name) && !strings.ContainsAny(name, "\\\r\n\t\x00")
 }
@@ -241,8 +260,8 @@ func safePath(name string) bool {
 // review of a vendored repository as incomplete.
 var dependencyDirs = []string{"vendor", "node_modules", ".venv", "__pycache__"}
 
-// dependencyNote tells the model that third-party code is never in a snapshot.
-var dependencyNote = "Dependency directories (" + strings.Join(dependencyDirs, ", ") + ") are never included."
+// dependencyNote tells the model what a snapshot never contains.
+var dependencyNote = "Binary files, symlinks and dependency directories (" + strings.Join(dependencyDirs, ", ") + ") are never included."
 
 func dependencyDir(name string) bool {
 	return slices.Contains(dependencyDirs, strings.ToLower(name))

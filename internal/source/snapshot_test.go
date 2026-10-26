@@ -65,13 +65,16 @@ func TestSnapshotFiltersAndRedacts(t *testing.T) {
 		archiveFile{name: "root/hardlink", kind: tar.TypeLink},
 		archiveFile{name: "root/image.bin", content: "\x00\xff"},
 		archiveFile{name: "root/big.txt", content: strings.Repeat("a", maxFileBytes+1)},
+		archiveFile{name: "root/big.png", content: "\x89PNG\x00" + strings.Repeat("a", maxFileBytes)},
+		archiveFile{name: "root/latin1.html", content: "caf\xe9\n"},
 	)
 	s, err := FromArchive(data, "sha", "secret-literal")
 	assert.NilError(t, err)
 	assert.Equal(t, s.Commit, "sha")
 	assert.Equal(t, len(s.Files), 2)
-	// Vendored code is skipped without counting as missing coverage.
-	assert.Equal(t, s.Excluded, 6)
+	// Only oversized text and credential-like files count as missing
+	// coverage; dependencies, links and binary files hold no reviewable source.
+	assert.Equal(t, s.Excluded, 3)
 	assert.Equal(t, s.Files["a.go"], "package a\n// [REDACTED]\n")
 	assert.Equal(t, s.Files["keys.txt"], "[REDACTED]")
 	encoded, err := json.Marshal(s)

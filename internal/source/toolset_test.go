@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -65,13 +66,15 @@ func TestUnavailableAndBoundedDiffTools(t *testing.T) {
 	assert.ErrorContains(t, err, "before snapshot is unavailable")
 	_, err = tools.Call(context.Background(), "read_diff", json.RawMessage(`{"path":"a.go"}`))
 	assert.ErrorContains(t, err, "diff is unavailable")
+	var unavailable *UnavailableError
+	assert.Assert(t, errors.As(err, &unavailable))
 	tools.Diff = &Diff{Files: []FileDiff{{NewPath: "a.go", Status: "added", Hunks: []Hunk{{Lines: []DiffLine{
 		{Kind: "add", NewLine: 1, Content: strings.Repeat("x", 20000)},
 	}}}}}}
 	result, err := tools.Call(context.Background(), "read_diff", json.RawMessage(`{"path":"a.go"}`))
 	assert.NilError(t, err)
 	assert.Assert(t, len(result) <= 16000)
-	assert.Assert(t, strings.Contains(result, "truncated"))
+	assert.Assert(t, strings.Contains(result, "too long for read_diff; read it with read_file"), result)
 }
 
 func TestReadDiffModeOnly(t *testing.T) {
@@ -128,22 +131,15 @@ func TestRevisionSourceQuotes(t *testing.T) {
 
 func TestEncodedSourceResultLimits(t *testing.T) {
 	tools := &Toolset{Head: &Snapshot{Files: map[string]string{"file": strings.Repeat("\t", 8000) + "value"}}}
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{name: "read_file", input: `{"path":"file","start_line":1,"end_line":1}`},
-		{name: "search_code", input: `{"query":"value"}`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			output, err := tools.Call(context.Background(), tt.name, json.RawMessage(tt.input))
-			assert.NilError(t, err)
-			assert.Assert(t, len(output) < 16000)
-			assert.Assert(t, strings.Contains(output, "[Result truncated"))
-			assert.Assert(t, !strings.Contains(output, "source_json="), "do not emit partial JSON strings")
-		})
-	}
+	_, err := tools.Call(context.Background(), "read_file", json.RawMessage(`{"path":"file","start_line":1,"end_line":1}`))
+	var unavailable *UnavailableError
+	assert.Assert(t, errors.As(err, &unavailable), err)
+	assert.Assert(t, !strings.Contains(err.Error(), "source_json="), "do not emit partial JSON strings")
+	output, err := tools.Call(context.Background(), "search_code", json.RawMessage(`{"query":"value"}`))
+	assert.NilError(t, err)
+	assert.Assert(t, len(output) < 16000)
+	assert.Assert(t, strings.Contains(output, "too long for search results; read it with read_file"), output)
+	assert.Assert(t, !strings.Contains(output, "source_json="), "do not emit partial JSON strings")
 }
 
 func TestCombinedSnapshotLimits(t *testing.T) {

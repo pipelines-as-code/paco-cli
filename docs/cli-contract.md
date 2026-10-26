@@ -157,9 +157,12 @@ The diff stays authoritative for anchors.
 regular UTF-8 text files in memory without extracting them to disk. It
 skips symlinks, hardlinks, binary files, files over 512 KiB, common
 credential files, and dependency directories such as `vendor` and
-`node_modules`. Skipped dependency directories do not count as excluded
-files, so they do not mark the review's coverage as incomplete; the
-search tools tell Claude they are never included.
+`node_modules`. Only text files that are too large or look like
+credentials count as excluded and mark the review's coverage as
+incomplete. Symlinks, binary files (a NUL byte or invalid UTF-8) and
+dependency directories hold no reviewable source, so they are skipped
+silently; the search tools tell Claude they are never included. Binary
+changes in the PR itself are still reported.
 
 Limits:
 
@@ -220,8 +223,10 @@ Paco skips the verifier.
 
 In addition to revision-selectable source reads, `read_diff` exposes bounded
 numbered hunks. Missing before context falls back to the diff and is reported
-as incomplete coverage. Failed tool reads and truncated results also mark the
-run partial. Budget exhaustion, malformed verifier output, provider errors,
+as incomplete coverage. Truncated results and invalid requests are not
+coverage gaps, since a narrower or corrected request continues them. A
+source line too long for `read_file`, or diff data that cannot be read,
+marks the run partial and names that cause in the summary. Budget exhaustion, malformed verifier output, provider errors,
 or invalid verifier citations withhold all findings.
 
 Plain-output responses may put the final object in a `json` code fence, which

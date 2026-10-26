@@ -215,8 +215,8 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 		if snapshot != nil {
 			coverage = &coverageTools{Toolset: snapshot}
 			tools = coverage
-			if snapshot.Excluded > 0 {
-				p.limitations = append(p.limitations, fmt.Sprintf("%d files excluded from the head snapshot.", snapshot.Excluded))
+			if line := excludedLimitation(snapshot, nil); line != "" {
+				p.limitations = append(p.limitations, line)
 			}
 			p.log.Line("Repository exploration available: %d files at %s", len(snapshot.Files), snapshot.Commit)
 			if !opts.NoInventory {
@@ -324,8 +324,8 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 	if opts.NoExploration {
 		p.limitations = append(p.limitations, "Repository exploration disabled.")
 	}
-	if coverage != nil && coverage.incomplete {
-		p.limitations = append(p.limitations, "Some repository reads failed or returned truncated results.")
+	if coverage != nil {
+		p.limitations = append(p.limitations, coverage.gaps...)
 	}
 	p.accepted = len(normalized.Comments)
 	p.state = "complete"

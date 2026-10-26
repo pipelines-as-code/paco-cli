@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -243,10 +244,8 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	}
 	status.HeadSHA, status.Repo, status.PRNumber = input.manifest.HeadSHA, input.manifest.Repo, input.manifest.PRNumber
 	status.BaseRef, status.TargetBaseSHA = input.manifest.BaseRef, input.manifest.TargetBaseSHA
+	collected := len(status.Limitations)
 	status.Limitations = append(status.Limitations, input.manifest.Limitations...)
-	if input.manifest.ContextStatus == "partial" {
-		status.Limitations = append(status.Limitations, "Collection reported incomplete context.")
-	}
 	binary := false
 	for _, file := range input.tools.Diff.Files {
 		if file.OldMode != "" && file.NewMode != "" && file.OldMode != file.NewMode {
@@ -265,10 +264,11 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if input.tools.Before == nil {
 		status.Limitations = append(status.Limitations, "Full before source unavailable; pre-change evidence is limited to the diff.")
 	}
-	for _, snapshot := range []*source.Snapshot{input.tools.Head, input.tools.Before} {
-		if snapshot != nil && snapshot.Excluded > 0 {
-			status.Limitations = append(status.Limitations, fmt.Sprintf("%d files excluded from snapshot %s.", snapshot.Excluded, snapshot.Commit))
-		}
+	if line := excludedLimitation(input.tools.Head, input.tools.Before); line != "" {
+		status.Limitations = append(status.Limitations, line)
+	}
+	if input.manifest.ContextStatus == "partial" && len(status.Limitations) == collected {
+		status.Limitations = append(status.Limitations, "Paco could not collect all of the repository context.")
 	}
 	optional := func(name string) ([]byte, error) {
 		data, err := ws.Read(name)
@@ -474,9 +474,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	status.Accepted = len(result.Comments) + len(result.SummaryFindings)
 	status.Unanchored = len(result.SummaryFindings)
 	status.State = "complete"
-	if tools.incomplete {
-		status.Limitations = append(status.Limitations, "Some repository tool reads failed or returned truncated results.")
-	}
+	status.Limitations = append(status.Limitations, tools.gaps...)
 	if len(status.Limitations) > 0 {
 		status.State = "partial"
 	}
@@ -555,13 +553,52 @@ func unfenced(field string) string {
 
 type coverageTools struct {
 	model.Toolset
-	incomplete bool
+	gaps []string
 }
 
+// Call records Paco-owned limitation text for data no request can return;
+// invalid requests and truncated results a narrower request can continue
+// are not coverage gaps.
 func (t *coverageTools) Call(ctx context.Context, name string, input json.RawMessage) (string, error) {
 	output, err := t.Toolset.Call(ctx, name, input)
-	if err != nil || strings.Contains(output, "[Result truncated") {
-		t.incomplete = true
+	var unavailable *source.UnavailableError
+	if errors.As(err, &unavailable) && !slices.Contains(t.gaps, unavailable.Limitation) {
+		t.gaps = append(t.gaps, unavailable.Limitation)
 	}
 	return output, err
+}
+
+// excludedLimitation describes the text files a snapshot left out, naming
+// both revisions in one line when they left out the same number.
+func excludedLimitation(head, before *source.Snapshot) string {
+	files := func(n int) string {
+		if n == 1 {
+			return "1 file"
+		}
+		return fmt.Sprintf("%d files", n)
+	}
+	var parts []string
+	if head != nil && before != nil && head.Excluded > 0 && head.Excluded == before.Excluded {
+		parts = append(parts, fmt.Sprintf("%s at PR head %s and base %s", files(head.Excluded), shortSHA(head.Commit), shortSHA(before.Commit)))
+	} else {
+		for _, item := range []struct {
+			label    string
+			snapshot *source.Snapshot
+		}{{"PR head", head}, {"base", before}} {
+			if item.snapshot != nil && item.snapshot.Excluded > 0 {
+				parts = append(parts, fmt.Sprintf("%s at %s %s", files(item.snapshot.Excluded), item.label, shortSHA(item.snapshot.Commit)))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Could not load " + strings.Join(parts, " and ") + " because they were too large, looked like credentials, or could not be read."
+}
+
+func shortSHA(commit string) string {
+	if len(commit) > 7 {
+		return commit[:7]
+	}
+	return commit
 }

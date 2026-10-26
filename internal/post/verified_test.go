@@ -76,6 +76,23 @@ func TestPostVerified(t *testing.T) {
 	assert.Equal(t, len(f.Calls("POST "+reviewsPath)), 1, "reposting one workspace must not duplicate inline findings")
 }
 
+func TestPostVerifiedListsCoverageGaps(t *testing.T) {
+	f, gh := ghtest.New(t)
+	happy(f)
+	f.JSON("GET /repos/owner/repo/pulls/1", `{"head":{"sha":"abc123"},"base":{"ref":"main","sha":"def456"}}`)
+	files := verifiedArtifacts(t)
+	var status review.VerificationStatus
+	assert.NilError(t, json.Unmarshal([]byte(files[review.FileStatus]), &status))
+	status.State = "partial"
+	status.Limitations = []string{"Could not load 5 files at PR head abc123 because they were too large, looked like credentials, or could not be read."}
+	data, err := json.Marshal(status)
+	assert.NilError(t, err)
+	files[review.FileStatus] = string(data)
+	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: workspace(t, files), GitHub: gh, LogWriter: &bytes.Buffer{}}))
+	body := f.Calls("POST " + commentsPath)[0].Body
+	assert.Assert(t, strings.Contains(body, "Paco could not check everything:\\n- Could not load 5 files at PR head abc123"), body)
+}
+
 func TestVerifiedPublicationRejectsInvalidState(t *testing.T) {
 	tests := []struct {
 		name    string

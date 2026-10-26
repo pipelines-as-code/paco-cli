@@ -89,7 +89,7 @@ func postVerified(ctx context.Context, ws *artifact.Workspace, t *target, rev *r
 	}
 	body := marker + "\n## Paco Review\n\n" + rev.Summary
 	if status.State == "partial" {
-		body += "\n\nReview coverage is incomplete."
+		body += "\n\nPaco could not check everything:"
 	}
 	for _, limitation := range status.Limitations {
 		body += "\n- " + limitation

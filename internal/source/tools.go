@@ -15,6 +15,16 @@ import (
 
 const maxResultBytes = 15000
 
+// UnavailableError reports collected data that no narrower tool request can
+// return. Limitation is fixed text owned by Paco, never source content, so
+// callers can show it as a coverage gap.
+type UnavailableError struct {
+	message    string
+	Limitation string
+}
+
+func (e *UnavailableError) Error() string { return e.message }
+
 func (s *Snapshot) Definitions() []model.Tool {
 	return []model.Tool{
 		{
@@ -96,6 +106,12 @@ func (s *Snapshot) call(ctx context.Context, name string, input json.RawMessage,
 		for n := args.Start; n <= args.End && n <= len(lines); n++ {
 			line := fmt.Sprintf("%d: %s\n", n, sourceText(lines[n-1]))
 			if output.Len()+len(line) > maxResultBytes {
+				if output.Len() == 0 {
+					return "", &UnavailableError{
+						message:    fmt.Sprintf("line %d exceeds the tool result limit and is unavailable; request the lines after it", n),
+						Limitation: "Some source lines were too long for Paco's read tools and were not reviewed.",
+					}
+				}
 				output.WriteString("[Result truncated; request a narrower line range.]\n")
 				break
 			}
@@ -137,6 +153,10 @@ func (s *Snapshot) call(ctx context.Context, name string, input json.RawMessage,
 		hits := 0
 		add := func(line string) bool {
 			if hits >= 100 || output.Len()+len(line) > maxResultBytes {
+				if hits == 0 {
+					output.WriteString("[A matching line is too long for search results; read it with read_file.]\n")
+					return false
+				}
 				output.WriteString("[Result truncated; narrow the search.]\n")
 				return false
 			}

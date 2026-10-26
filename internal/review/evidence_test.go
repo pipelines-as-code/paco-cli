@@ -107,26 +107,34 @@ func TestDiscoveryProtocol(t *testing.T) {
 func TestVerifierProtocol(t *testing.T) {
 	c := testCandidate()
 	base := decision{ID: c.ID, Outcome: "accept", Reason: "Guard removed.", Severity: "high", Evidence: c.Evidence}
+	invented := []Evidence{{Revision: "head", Path: "a.go", Start: 1, End: 1, Quote: "imagined"}}
 	tests := []struct {
-		name   string
-		change func(*verdict)
-		valid  bool
+		name    string
+		change  func(*verdict)
+		valid   bool
+		outcome string
 	}{
-		{name: "accept", valid: true},
-		{name: "reject", valid: true, change: func(v *verdict) {
+		{name: "accept", valid: true, outcome: "accept"},
+		{name: "reject", valid: true, outcome: "reject", change: func(v *verdict) {
 			v.Decisions[0].Outcome = "reject"
 			v.Decisions[0].Evidence = []Evidence{}
 		}},
-		{name: "insufficient evidence", valid: true, change: func(v *verdict) {
+		{name: "insufficient evidence", valid: true, outcome: "insufficient_evidence", change: func(v *verdict) {
 			v.Decisions[0].Outcome = "insufficient_evidence"
 			v.Decisions[0].Evidence = []Evidence{}
 		}},
 		{name: "missing decision", change: func(v *verdict) { v.Decisions = []decision{} }},
 		{name: "unknown candidate", change: func(v *verdict) { v.Decisions[0].ID = "invented" }},
 		{name: "duplicate decisions", change: func(v *verdict) { v.Decisions = append(v.Decisions, base) }},
-		{name: "accepted without evidence", change: func(v *verdict) { v.Decisions[0].Evidence = []Evidence{} }},
-		{name: "invented evidence", change: func(v *verdict) {
-			v.Decisions[0].Evidence = []Evidence{{Revision: "head", Path: "a.go", Start: 1, End: 1, Quote: "imagined"}}
+		{name: "accepted without evidence", valid: true, outcome: "insufficient_evidence", change: func(v *verdict) {
+			v.Decisions[0].Evidence = []Evidence{}
+		}},
+		{name: "accepted with invented evidence", valid: true, outcome: "insufficient_evidence", change: func(v *verdict) {
+			v.Decisions[0].Evidence = invented
+		}},
+		{name: "rejected with invented evidence", valid: true, outcome: "reject", change: func(v *verdict) {
+			v.Decisions[0].Outcome = "reject"
+			v.Decisions[0].Evidence = invented
 		}},
 		{name: "self duplicate", change: func(v *verdict) {
 			v.Decisions[0].Outcome = "reject"
@@ -140,10 +148,31 @@ func TestVerifierProtocol(t *testing.T) {
 			if tt.change != nil {
 				tt.change(&v)
 			}
-			_, err := parseVerdict(jsonText(t, v), []Candidate{c}, testEvidenceContext())
+			got, _, err := parseVerdict(jsonText(t, v), []Candidate{c}, testEvidenceContext())
 			assert.Equal(t, err == nil, tt.valid)
+			if tt.valid {
+				assert.Equal(t, got.Decisions[0].Outcome, tt.outcome)
+			}
 		})
 	}
+}
+
+func TestVerifierDowngradeCarriesDuplicates(t *testing.T) {
+	a, b := testCandidate(), testCandidate()
+	b.ID = "division-again"
+	v := verdict{Summary: "Changes division.", Decisions: []decision{
+		{ID: b.ID, Outcome: "reject", Reason: "Same issue.", DuplicateOf: a.ID, Evidence: []Evidence{}},
+		{ID: a.ID, Outcome: "accept", Reason: "Guard removed.", Severity: "high", Evidence: []Evidence{
+			{Revision: "head", Path: "a.go", Start: 1, End: 1, Quote: `return a \/ b`},
+		}},
+	}}
+	got, notes, err := parseVerdict(jsonText(t, v), []Candidate{a, b}, testEvidenceContext())
+	assert.NilError(t, err)
+	assert.Equal(t, got.Decisions[0].Outcome, "insufficient_evidence")
+	assert.Equal(t, got.Decisions[0].DuplicateOf, "")
+	assert.Equal(t, got.Decisions[1].Outcome, "insufficient_evidence")
+	assert.Equal(t, len(notes), 1)
+	assert.Assert(t, strings.Contains(notes[0], `quoted "return a \\/ b", source is "return a / b"`), notes[0])
 }
 
 func TestResponseObjectEnvelope(t *testing.T) {
@@ -174,7 +203,7 @@ func TestResponseObjectEnvelope(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := parseDiscovery(tt.prefix + d + tt.suffix)
 			assert.Equal(t, err == nil, tt.valid)
-			_, err = parseVerdict(tt.prefix+v+tt.suffix, nil, testEvidenceContext())
+			_, _, err = parseVerdict(tt.prefix+v+tt.suffix, nil, testEvidenceContext())
 			assert.Equal(t, err == nil, tt.valid)
 		})
 	}
@@ -189,6 +218,7 @@ func TestResponseObjectEnvelope(t *testing.T) {
 		ID: c.ID, Outcome: "accept", Reason: "Guard removed.", Severity: "high",
 		Evidence: []Evidence{{Revision: "head", Path: "a.go", Start: 1, End: 1, Quote: "invented"}},
 	}}}
-	_, err = parseVerdict("```json\n"+jsonText(t, bad)+"\n```", []Candidate{c}, testEvidenceContext())
-	assert.ErrorContains(t, err, "does not match source")
+	_, notes, err := parseVerdict("```json\n"+jsonText(t, bad)+"\n```", []Candidate{c}, testEvidenceContext())
+	assert.NilError(t, err)
+	assert.Assert(t, len(notes) == 1 && strings.Contains(notes[0], "does not match source"))
 }

@@ -426,10 +426,13 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		if err != nil {
 			return fail(fmt.Errorf("verification: %w", err))
 		}
-		verified, err := parseVerdict(text, candidates, input.evidence)
+		verified, notes, err := parseVerdict(text, candidates, input.evidence)
 		if err != nil {
 			p.log.Line("%s", responseShape("Verification", text))
 			return fail(fmt.Errorf("verification: %w", err))
+		}
+		for _, note := range notes {
+			p.log.Line("%s", note)
 		}
 		result.Summary = verified.Summary
 		byID := map[string]Candidate{}

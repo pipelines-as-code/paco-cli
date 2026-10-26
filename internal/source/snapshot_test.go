@@ -66,7 +66,7 @@ func TestSnapshotFiltersAndRedacts(t *testing.T) {
 		archiveFile{name: "root/image.bin", content: "\x00\xff"},
 		archiveFile{name: "root/big.txt", content: strings.Repeat("a", maxFileBytes+1)},
 		archiveFile{name: "root/big.png", content: "\x89PNG\x00" + strings.Repeat("a", maxFileBytes)},
-		archiveFile{name: "root/latin1.html", content: "caf\xe9\n"},
+		archiveFile{name: "root/latin1.html", content: "\xe9t\xe9\n"},
 	)
 	s, err := FromArchive(data, "sha", "secret-literal")
 	assert.NilError(t, err)

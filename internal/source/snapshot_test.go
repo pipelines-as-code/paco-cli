@@ -57,6 +57,10 @@ func TestSnapshotFiltersAndRedacts(t *testing.T) {
 		archiveFile{name: "root/.envrc", content: "secret"},
 		archiveFile{name: "root/sub/credentials.json", content: "secret"},
 		archiveFile{name: "root/vendor/dep.go", content: "vendored"},
+		archiveFile{name: "root/pkg/VENDOR/odd\nname.go", content: "vendored"},
+		archiveFile{name: "root/node_modules/odd\tname.js", content: "dependency"},
+		archiveFile{name: "root/.venv/odd\rname.py", content: "dependency"},
+		archiveFile{name: "root/__pycache__/odd\tname.pyc", content: "dependency"},
 		archiveFile{name: "root/link", kind: tar.TypeSymlink},
 		archiveFile{name: "root/hardlink", kind: tar.TypeLink},
 		archiveFile{name: "root/image.bin", content: "\x00\xff"},
@@ -66,7 +70,8 @@ func TestSnapshotFiltersAndRedacts(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Equal(t, s.Commit, "sha")
 	assert.Equal(t, len(s.Files), 2)
-	assert.Equal(t, s.Excluded, 7)
+	// Vendored code is skipped without counting as missing coverage.
+	assert.Equal(t, s.Excluded, 6)
 	assert.Equal(t, s.Files["a.go"], "package a\n// [REDACTED]\n")
 	assert.Equal(t, s.Files["keys.txt"], "[REDACTED]")
 	encoded, err := json.Marshal(s)
@@ -96,6 +101,9 @@ func TestSnapshotRejectsUnsafeArchives(t *testing.T) {
 		{name: "traversal", files: []archiveFile{{name: "root/../escape"}}},
 		{name: "absolute", files: []archiveFile{{name: "/root/escape"}}},
 		{name: "backslash", files: []archiveFile{{name: `root/sub\escape`}}},
+		{name: "dependency traversal", files: []archiveFile{{name: "root/vendor/../escape"}}},
+		{name: "dependency backslash", files: []archiveFile{{name: `root/vendor/sub\escape`}}},
+		{name: "control character", files: []archiveFile{{name: "root/odd\tname.go"}}},
 		{name: "no root", files: []archiveFile{{name: "file.go"}}},
 		{name: "duplicate", files: []archiveFile{{name: "root/a"}, {name: "root/a"}}},
 	}
@@ -145,6 +153,8 @@ func TestDecodeSnapshotRejectsInvalidData(t *testing.T) {
 		{name: "missing commit", data: `{"files":{}}`},
 		{name: "traversal", data: `{"commit":"sha","files":{"../x":"x"}}`, commit: "sha"},
 		{name: "credential file", data: `{"commit":"sha","files":{".env":"x"}}`, commit: "sha"},
+		{name: "dependency file", data: `{"commit":"sha","files":{"Vendor/dep.go":"x"}}`, commit: "sha"},
+		{name: "git metadata", data: `{"commit":"sha","files":{".git/config":"x"}}`, commit: "sha"},
 		{name: "binary", data: `{"commit":"sha","files":{"x":"\u0000"}}`, commit: "sha"},
 	}
 	for _, tt := range tests {

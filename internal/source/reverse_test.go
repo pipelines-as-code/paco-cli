@@ -22,6 +22,7 @@ func TestFromDir(t *testing.T) {
 	write("pkg/util.go", "package pkg // token-123\n")
 	write(".git/config", "[core]\n")
 	write("vendor/dep/dep.go", "package dep\n")
+	write("node_modules/odd\tname.js", "x\n")
 	write("image.bin", "\x00\x01")
 	assert.NilError(t, os.Symlink("main.go", filepath.Join(dir, "link.go")))
 
@@ -32,8 +33,31 @@ func TestFromDir(t *testing.T) {
 		"main.go":     "package main\n",
 		"pkg/util.go": "package pkg // [REDACTED]\n",
 	})
-	// .git is skipped outright; vendor, binary and symlink count as excluded.
-	assert.Equal(t, s.Excluded, 3)
+	// .git and dependency directories are not walked; binary and symlink count as excluded.
+	assert.Equal(t, s.Excluded, 2)
+}
+
+func TestFromDirSkipsDependencyDirs(t *testing.T) {
+	for _, name := range []string{"vendor", "node_modules", ".venv", "__pycache__", "pkg/VENDOR"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			assert.NilError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600))
+			dependency := filepath.Join(dir, name)
+			assert.NilError(t, os.MkdirAll(dependency, 0o755))
+			t.Cleanup(func() { assert.NilError(t, os.Chmod(dependency, 0o755)) })
+			assert.NilError(t, os.Chmod(dependency, 0))
+			_, err := os.ReadDir(dependency)
+			if err == nil {
+				t.Skip("directory permissions are not enforced")
+			}
+			assert.Assert(t, os.IsPermission(err), err)
+
+			s, err := source.FromDir(dir, "abc")
+			assert.NilError(t, err)
+			assert.DeepEqual(t, s.Files, map[string]string{"main.go": "package main\n"})
+			assert.Equal(t, s.Excluded, 0)
+		})
+	}
 }
 
 const reverseDiff = `diff --git a/a.go b/a.go
@@ -106,4 +130,26 @@ func TestReverseExcludesMismatchedFiles(t *testing.T) {
 	// a.go no longer matches the diff and new/name.txt is missing from head.
 	assert.DeepEqual(t, before.Files, map[string]string{"gone.txt": "x\ny"})
 	assert.Equal(t, before.Excluded, 2)
+}
+
+func TestReverseSkipsDependencyFiles(t *testing.T) {
+	parsed, err := diff.Parse(`diff --git a/vendor/dep.go b/vendor/dep.go
+--- a/vendor/dep.go
++++ b/vendor/dep.go
+@@ -1 +1 @@
+-package old
++package dep
+diff --git a/node_modules/x.js b/node_modules/x.js
+deleted file mode 100644
+--- a/node_modules/x.js
++++ /dev/null
+@@ -1 +0,0 @@
+-x
+`)
+	assert.NilError(t, err)
+	head := &source.Snapshot{Commit: "head", Files: map[string]string{"a.go": "package a\n"}}
+
+	before := source.Reverse(head, parsed, "base")
+	assert.DeepEqual(t, before.Files, map[string]string{"a.go": "package a\n"})
+	assert.Equal(t, before.Excluded, 0)
 }

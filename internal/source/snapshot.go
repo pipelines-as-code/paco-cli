@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -71,7 +72,7 @@ func FromArchive(data []byte, commit string, secrets ...string) (*Snapshot, erro
 			return nil, errors.New("source archive contains an invalid path")
 		}
 		_, name, ok := strings.Cut(header.Name, "/")
-		if header.Typeflag == tar.TypeDir {
+		if header.Typeflag == tar.TypeDir || dependencyPath(name) {
 			continue
 		}
 		if !ok || !safePath(name) {
@@ -86,7 +87,8 @@ func FromArchive(data []byte, commit string, secrets ...string) (*Snapshot, erro
 }
 
 // FromDir reads a checked-out working tree with the same filters and limits
-// as FromArchive. Symlinks are never followed and .git directories are skipped.
+// as FromArchive. Symlinks are never followed, and .git and dependency
+// directories are not walked.
 func FromDir(dir, commit string, secrets ...string) (*Snapshot, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -100,7 +102,7 @@ func FromDir(dir, commit string, secrets ...string) (*Snapshot, error) {
 			return err
 		}
 		if entry.IsDir() {
-			if strings.EqualFold(entry.Name(), ".git") {
+			if strings.EqualFold(entry.Name(), ".git") || dependencyDir(entry.Name()) {
 				return fs.SkipDir
 			}
 			return nil
@@ -139,6 +141,9 @@ type collector struct {
 
 // add keeps one regular UTF-8 text file, counting skipped files as excluded.
 func (c *collector) add(name string, regular bool, size int64, read func() ([]byte, error)) error {
+	if dependencyPath(name) {
+		return nil
+	}
 	if !regular || excludedPath(name) || size > maxFileBytes || security.ScanSecrets(name, c.secrets...) != "" {
 		c.s.Excluded++
 		return nil
@@ -231,10 +236,28 @@ func safePath(name string) bool {
 	return name != "." && fs.ValidPath(name) && !strings.ContainsAny(name, "\\\r\n\t\x00")
 }
 
+// dependencyDirs are third-party directories that every snapshot leaves out
+// on purpose; they are not counted as excluded, since that would mark every
+// review of a vendored repository as incomplete.
+var dependencyDirs = []string{"vendor", "node_modules", ".venv", "__pycache__"}
+
+// dependencyNote tells the model that third-party code is never in a snapshot.
+var dependencyNote = "Dependency directories (" + strings.Join(dependencyDirs, ", ") + ") are never included."
+
+func dependencyDir(name string) bool {
+	return slices.Contains(dependencyDirs, strings.ToLower(name))
+}
+
+func dependencyPath(name string) bool {
+	return slices.ContainsFunc(strings.Split(name, "/"), dependencyDir)
+}
+
 func excludedPath(name string) bool {
+	if dependencyPath(name) {
+		return true
+	}
 	for _, part := range strings.Split(name, "/") {
-		switch strings.ToLower(part) {
-		case ".git", "node_modules", "vendor", ".venv", "__pycache__":
+		if strings.EqualFold(part, ".git") {
 			return true
 		}
 	}

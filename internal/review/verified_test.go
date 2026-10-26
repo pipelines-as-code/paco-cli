@@ -410,6 +410,7 @@ func TestCollectionLimitationIsExplained(t *testing.T) {
 	tests := []struct {
 		name   string
 		source string
+		diff   string
 		want   []string
 	}{
 		{
@@ -418,6 +419,11 @@ func TestCollectionLimitationIsExplained(t *testing.T) {
 			want:   []string{"Could not load 2 files at PR head head-sh because they were too large, looked like credentials, or could not be read."},
 		},
 		{name: "unexplained partial context", want: []string{"Paco could not collect all of the repository context."}},
+		{
+			name: "unrelated limitation does not explain partial context",
+			diff: verifiedDiff + "diff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ\n",
+			want: []string{"Binary file changes were not reviewed.", "Paco could not collect all of the repository context."},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -428,6 +434,10 @@ func TestCollectionLimitationIsExplained(t *testing.T) {
 			var manifest artifact.InputManifest
 			assert.NilError(t, json.Unmarshal(data, &manifest))
 			manifest.ContextStatus = "partial"
+			if tt.diff != "" {
+				manifest.DiffDigest = Digest([]byte(tt.diff))
+				assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileDiff), []byte(tt.diff), 0o600))
+			}
 			assert.NilError(t, os.WriteFile(manifestPath, []byte(jsonText(t, manifest)), 0o600))
 			if tt.source != "" {
 				assert.NilError(t, os.WriteFile(filepath.Join(ws, artifact.FileSource), []byte(tt.source), 0o600))

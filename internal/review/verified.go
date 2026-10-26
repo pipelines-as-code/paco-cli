@@ -244,7 +244,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	}
 	status.HeadSHA, status.Repo, status.PRNumber = input.manifest.HeadSHA, input.manifest.Repo, input.manifest.PRNumber
 	status.BaseRef, status.TargetBaseSHA = input.manifest.BaseRef, input.manifest.TargetBaseSHA
-	collected := len(status.Limitations)
+	explained := len(input.manifest.Limitations) > 0 || input.tools.Head == nil || input.tools.Before == nil
 	status.Limitations = append(status.Limitations, input.manifest.Limitations...)
 	binary := false
 	for _, file := range input.tools.Diff.Files {
@@ -266,8 +266,9 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	}
 	if line := excludedLimitation(input.tools.Head, input.tools.Before); line != "" {
 		status.Limitations = append(status.Limitations, line)
+		explained = true
 	}
-	if input.manifest.ContextStatus == "partial" && len(status.Limitations) == collected {
+	if input.manifest.ContextStatus == "partial" && !explained {
 		status.Limitations = append(status.Limitations, "Paco could not collect all of the repository context.")
 	}
 	optional := func(name string) ([]byte, error) {

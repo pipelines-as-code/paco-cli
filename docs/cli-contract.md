@@ -181,8 +181,9 @@ failure artifact.
 
 Web search uses the provider's `web_search_20250305` tool, which may
 cost extra. Claude is told to search only public package names and
-versions and to cite URLs for findings that rely on web results. Search
-errors fail the review.
+versions and to cite URLs for findings that rely on web results. A
+failed or refused search is logged and handed back to Claude, which
+carries on without it; it does not count against the search allowance.
 
 ### Verified Findings
 

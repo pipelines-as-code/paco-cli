@@ -27,6 +27,7 @@ type Client struct {
 	Models       ModelService
 	Files        FileService
 	Skills       SkillService
+	UserProfiles UserProfileService
 	Organization OrganizationService
 	Beta         BetaService
 }
@@ -221,6 +222,7 @@ func NewClient(opts ...option.RequestOption) (r Client) {
 	r.Models = NewModelService(opts...)
 	r.Files = NewFileService(opts...)
 	r.Skills = NewSkillService(opts...)
+	r.UserProfiles = NewUserProfileService(opts...)
 	r.Organization = NewOrganizationService(opts...)
 	r.Beta = NewBetaService(opts...)
 
@@ -238,10 +240,6 @@ func NewClient(opts ...option.RequestOption) (r Client) {
 // type implements a MarshalJSON function, it will be used instead to serialize the
 // request. If a URLQuery method is implemented, the returned [url.Values] will be
 // used as query strings to the url.
-//
-// If your params struct uses [param.Field], you must provide either [MarshalJSON],
-// [URLQuery], and/or [MarshalForm] functions. It is undefined behavior to use a
-// struct uses [param.Field] without specifying how it is serialized.
 //
 // Any "…Params" object defined in this library can be used as the request
 // argument. Note that 'path' arguments will not be forwarded into the url.

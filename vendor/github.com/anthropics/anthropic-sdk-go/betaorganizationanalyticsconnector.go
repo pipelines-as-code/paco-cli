@@ -48,6 +48,8 @@ func (r *BetaOrganizationAnalyticsConnectorService) List(ctx context.Context, qu
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	path := "v1/organizations/analytics/connectors?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.analytics.connectors.list", "/v1/organizations/analytics/connectors", "date", "ending_date", "filter", "group_by", "limit", "order", "order_by", "page", "starting_date"))
+	opts = append(opts, requestconfig.WithSpanContentQuery("filter"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, query, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -113,12 +115,14 @@ type BetaOrganizationAnalyticsConnectorListParams struct {
 	// name such as 'GitHub MCP' also matches its normalized stored form ('github'),
 	// and for rows whose `connector_name` is an opaque connector id the connector's
 	// display name (`connector_display_name`) also matches; `product` is one of
-	// `chat`, `claude_code`, `cowork`, or `office_agent`; `rbac_group_id` takes the
-	// tagged id (`rbac_group_...`, as emitted in responses and by the spend-limits
-	// API) or a bare group UUID, and matches users who held the group at any point
-	// during each covered UTC day (time-of-usage attribution); `user_id` takes a
-	// tagged user id (`user_...`), as emitted in responses. An unsupported dimension
-	// returns 400. At most 100 entries.
+	// `chat_cowork_unified`, `chat`, `claude_code`, `cowork`, or `office_agent`;
+	// `rbac_group_id` takes the tagged id (`rbac_group_...`, as emitted in responses
+	// and by the spend-limits API) or a bare group UUID, and matches users who held
+	// the group at any point during each covered UTC day (time-of-usage attribution);
+	// `user_id` takes a tagged user id (`user_...`), as emitted in responses. An
+	// unsupported dimension returns 400. At most 100 entries. `chat_cowork_unified` is
+	// accepted as a `product` value only on deployments that offer Chat and Cowork
+	// unified.
 	Filter []string `query:"filter,omitzero" json:"-"`
 	// Dimensions to break results out by (e.g. `group_by[]=user_id`). Supported on
 	// this endpoint: `product`, `rbac_group_id`, `user_id`. Grouped rows carry the

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apijson"
 	"github.com/anthropics/anthropic-sdk-go/internal/apiquery"
@@ -52,8 +53,15 @@ func NewBetaOrganizationFederationRuleWorkspaceService(opts ...option.RequestOpt
 // fields on the rule itself.
 func (r *BetaOrganizationFederationRuleWorkspaceService) List(ctx context.Context, federationRuleID string, params BetaOrganizationFederationRuleWorkspaceListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaFederationRuleWorkspace], err error) {
 	var raw *http.Response
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
@@ -61,7 +69,8 @@ func (r *BetaOrganizationFederationRuleWorkspaceService) List(ctx context.Contex
 		err = errors.New("missing required federation_rule_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/federation_rules/%s/workspaces?beta=true", federationRuleID)
+	path := fmt.Sprintf("v1/organizations/federation_rules/%s/workspaces?beta=true", url.PathEscape(federationRuleID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.federation.rules.workspaces.list", "/v1/organizations/federation_rules/{federation_rule_id}/workspaces", "limit", "page"), requestconfig.WithSpanAttribute("anthropic.organization.federation_rule.id", federationRuleID))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -105,15 +114,23 @@ func (r *BetaOrganizationFederationRuleWorkspaceService) ListAutoPaging(ctx cont
 // may only manage rules whose `oauth_scope` is `workspace:developer` or
 // `workspace:inference`; other scopes require a Console session.
 func (r *BetaOrganizationFederationRuleWorkspaceService) Add(ctx context.Context, federationRuleID string, params BetaOrganizationFederationRuleWorkspaceAddParams, opts ...option.RequestOption) (res *BetaFederationRuleWorkspace, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	if federationRuleID == "" {
 		err = errors.New("missing required federation_rule_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/federation_rules/%s/workspaces?beta=true", federationRuleID)
+	path := fmt.Sprintf("v1/organizations/federation_rules/%s/workspaces?beta=true", url.PathEscape(federationRuleID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.federation.rules.workspaces.add", "/v1/organizations/federation_rules/{federation_rule_id}/workspaces"), requestconfig.WithSpanAttribute("anthropic.organization.federation_rule.id", federationRuleID), requestconfig.WithSpanCreatedID("anthropic.organization.federation_rule.workspace.id", &res, func(created *BetaFederationRuleWorkspace) string { return created.WorkspaceID }))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -129,8 +146,15 @@ func (r *BetaOrganizationFederationRuleWorkspaceService) Add(ctx context.Context
 // may only manage rules whose `oauth_scope` is `workspace:developer` or
 // `workspace:inference`; other scopes require a Console session.
 func (r *BetaOrganizationFederationRuleWorkspaceService) Remove(ctx context.Context, workspaceID string, params BetaOrganizationFederationRuleWorkspaceRemoveParams, opts ...option.RequestOption) (res *BetaOrganizationFederationRuleWorkspaceRemoveResponse, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	if params.FederationRuleID == "" {
@@ -141,7 +165,8 @@ func (r *BetaOrganizationFederationRuleWorkspaceService) Remove(ctx context.Cont
 		err = errors.New("missing required workspace_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/federation_rules/%s/workspaces/%s?beta=true", params.FederationRuleID, workspaceID)
+	path := fmt.Sprintf("v1/organizations/federation_rules/%s/workspaces/%s?beta=true", url.PathEscape(params.FederationRuleID), url.PathEscape(workspaceID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.federation.rules.workspaces.remove", "/v1/organizations/federation_rules/{federation_rule_id}/workspaces/{workspace_id}"), requestconfig.WithSpanAttribute("anthropic.organization.federation_rule.id", params.FederationRuleID), requestconfig.WithSpanAttribute("anthropic.organization.federation_rule.workspace.id", workspaceID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &res, opts...)
 	return res, err
 }

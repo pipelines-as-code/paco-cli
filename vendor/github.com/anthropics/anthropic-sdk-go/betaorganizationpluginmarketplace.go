@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apiform"
@@ -56,8 +57,15 @@ func NewBetaOrganizationPluginMarketplaceService(opts ...option.RequestOption) (
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginMarketplaceService) Get(ctx context.Context, marketplaceID string, params BetaOrganizationPluginMarketplaceGetParams, opts ...option.RequestOption) (res *BetaPluginMarketplace, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
@@ -65,7 +73,8 @@ func (r *BetaOrganizationPluginMarketplaceService) Get(ctx context.Context, mark
 		err = errors.New("missing required marketplace_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/plugin_marketplaces/%s?beta=true", marketplaceID)
+	path := fmt.Sprintf("v1/organizations/plugin_marketplaces/%s?beta=true", url.PathEscape(marketplaceID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugin_marketplaces.retrieve", "/v1/organizations/plugin_marketplaces/{marketplace_id}", "organization_id"), requestconfig.WithSpanAttribute("anthropic.organization.plugin_marketplace.id", marketplaceID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &res, opts...)
 	return res, err
 }
@@ -86,8 +95,15 @@ func (r *BetaOrganizationPluginMarketplaceService) Get(ctx context.Context, mark
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginMarketplaceService) Update(ctx context.Context, marketplaceID string, params BetaOrganizationPluginMarketplaceUpdateParams, opts ...option.RequestOption) (res *BetaPluginMarketplace, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
@@ -95,7 +111,8 @@ func (r *BetaOrganizationPluginMarketplaceService) Update(ctx context.Context, m
 		err = errors.New("missing required marketplace_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/plugin_marketplaces/%s?beta=true", marketplaceID)
+	path := fmt.Sprintf("v1/organizations/plugin_marketplaces/%s?beta=true", url.PathEscape(marketplaceID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugin_marketplaces.update", "/v1/organizations/plugin_marketplaces/{marketplace_id}"), requestconfig.WithSpanAttribute("anthropic.organization.plugin_marketplace.id", marketplaceID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -121,12 +138,20 @@ func (r *BetaOrganizationPluginMarketplaceService) Update(ctx context.Context, m
 // readiness enabled.
 func (r *BetaOrganizationPluginMarketplaceService) List(ctx context.Context, params BetaOrganizationPluginMarketplaceListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaPluginMarketplace], err error) {
 	var raw *http.Response
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01"), option.WithResponseInto(&raw)}, opts...)
 	path := "v1/organizations/plugin_marketplaces?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugin_marketplaces.list", "/v1/organizations/plugin_marketplaces", "limit", "organization_id", "owner_type", "page", "source"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -194,12 +219,20 @@ func (r *BetaOrganizationPluginMarketplaceService) ListAutoPaging(ctx context.Co
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginMarketplaceService) ValidateArchive(ctx context.Context, params BetaOrganizationPluginMarketplaceValidateArchiveParams, opts ...option.RequestOption) (res *BetaPluginMarketplaceValidationReport, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
 	path := "v1/organizations/plugin_marketplaces/validate_archive?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugin_marketplaces.validate_archive", "/v1/organizations/plugin_marketplaces/validate_archive"))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -236,12 +269,20 @@ func (r *BetaOrganizationPluginMarketplaceService) ValidateArchive(ctx context.C
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginMarketplaceService) ValidateRepository(ctx context.Context, params BetaOrganizationPluginMarketplaceValidateRepositoryParams, opts ...option.RequestOption) (res *BetaPluginMarketplaceValidationReport, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
 	path := "v1/organizations/plugin_marketplaces/validate_repository?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugin_marketplaces.validate_repository", "/v1/organizations/plugin_marketplaces/validate_repository"))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -690,14 +731,19 @@ func (r BetaOrganizationPluginMarketplaceValidateArchiveParams) MarshalMultipart
 
 type BetaOrganizationPluginMarketplaceValidateRepositoryParams struct {
 	// The `https://` URL of a public repository on github.com that holds the
-	// marketplace. Any other host, a URL with credentials in it, or one that does not
-	// name a repository is a 400.
+	// marketplace. A URL longer than 2,048 characters, on any other host or scheme,
+	// with a port other than 443 or 80, with credentials in it, or that does not name
+	// exactly `owner/repo` (a trailing `.git` or `/` is accepted) is a 400. A private
+	// or missing repository is reported in the response, not refused.
 	RepositoryURL string `json:"repository_url" api:"required"`
 	// The branch to validate the tip of, or the full 40-character SHA of the commit to
 	// validate. When omitted, the branch a synchronization would read (usually the
 	// repository's default branch); if that is not the default branch, the report's
-	// `ref` says which branch was read. An empty string, or a value that is neither a
-	// branch name nor a 40-character SHA, is a 400.
+	// `ref` says which branch was read. An empty string, a value longer than 255
+	// characters, or one that contains `..` or a character other than ASCII letters,
+	// digits, `.`, `_`, `-`, `+`, and `/`, is a 400. Any other value that is not a
+	// 40-character SHA is read as a branch name; if the repository has no such branch,
+	// the response is a report with `valid: false`, not a 400.
 	Ref param.Opt[string] `json:"ref,omitzero"`
 	// This endpoint is in beta: requests must send `ce-plugins-2026-09-01` in this
 	// header.

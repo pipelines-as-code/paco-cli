@@ -58,6 +58,7 @@ func (r *MessageBatchService) New(ctx context.Context, params MessageBatchNewPar
 	}
 	opts = slices.Concat(r.Options, opts)
 	path := "v1/messages/batches"
+	opts = append(opts, requestconfig.WithSpan("anthropic.messages.batches.create", "/v1/messages/batches"), messageBatchesCreateSpan(len(params.Requests)), requestconfig.WithSpanCreatedID("anthropic.message.batch.id", &res, func(created *MessageBatch) string { return created.ID }))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -77,7 +78,8 @@ func (r *MessageBatchService) Get(ctx context.Context, messageBatchID string, qu
 		err = errors.New("missing required message_batch_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/messages/batches/%s", messageBatchID)
+	path := fmt.Sprintf("v1/messages/batches/%s", url.PathEscape(messageBatchID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.messages.batches.retrieve", "/v1/messages/batches/{message_batch_id}"), requestconfig.WithSpanAttribute("anthropic.message.batch.id", messageBatchID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &res, opts...)
 	return res, err
 }
@@ -95,6 +97,7 @@ func (r *MessageBatchService) List(ctx context.Context, params MessageBatchListP
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	path := "v1/messages/batches"
+	opts = append(opts, requestconfig.WithSpan("anthropic.messages.batches.list", "/v1/messages/batches", "after_id", "before_id", "limit"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -132,7 +135,8 @@ func (r *MessageBatchService) Delete(ctx context.Context, messageBatchID string,
 		err = errors.New("missing required message_batch_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/messages/batches/%s", messageBatchID)
+	path := fmt.Sprintf("v1/messages/batches/%s", url.PathEscape(messageBatchID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.messages.batches.delete", "/v1/messages/batches/{message_batch_id}"), requestconfig.WithSpanAttribute("anthropic.message.batch.id", messageBatchID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &res, opts...)
 	return res, err
 }
@@ -158,7 +162,8 @@ func (r *MessageBatchService) Cancel(ctx context.Context, messageBatchID string,
 		err = errors.New("missing required message_batch_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/messages/batches/%s/cancel", messageBatchID)
+	path := fmt.Sprintf("v1/messages/batches/%s/cancel", url.PathEscape(messageBatchID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.messages.batches.cancel", "/v1/messages/batches/{message_batch_id}/cancel"), requestconfig.WithSpanAttribute("anthropic.message.batch.id", messageBatchID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, nil, &res, opts...)
 	return res, err
 }
@@ -185,7 +190,8 @@ func (r *MessageBatchService) ResultsStreaming(ctx context.Context, messageBatch
 		err = errors.New("missing required message_batch_id parameter")
 		return jsonl.NewStream[MessageBatchIndividualResponse](nil, err)
 	}
-	path := fmt.Sprintf("v1/messages/batches/%s/results", messageBatchID)
+	path := fmt.Sprintf("v1/messages/batches/%s/results", url.PathEscape(messageBatchID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.messages.batches.results", "/v1/messages/batches/{message_batch_id}/results"), requestconfig.WithSpanAttribute("anthropic.message.batch.id", messageBatchID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &raw, opts...)
 	return jsonl.NewStream[MessageBatchIndividualResponse](raw, err)
 }
@@ -511,9 +517,9 @@ type MessageBatchNewParams struct {
 	// a Message.
 	Requests []MessageBatchNewParamsRequest `json:"requests,omitzero" api:"required"`
 	// The user profile ID to attribute the requests in this batch to. Use when acting
-	// on behalf of a party other than your organization. Requires the `user-profiles`
-	// beta header. Applies to every request in the batch; an individual request whose
-	// `user_profile_id` body field conflicts with this header is errored.
+	// on behalf of a party other than your organization. Applies to every request in
+	// the batch; an individual request whose `user_profile_id` body field conflicts
+	// with this header is errored.
 	UserProfileID param.Opt[string] `header:"anthropic-user-profile-id,omitzero" json:"-"`
 	// Optional header to select the Workspace for this request. The value is a
 	// Workspace ID (for example, `wrkspc_011CZkZaBF1tNoB5wlCeusgy`).
@@ -592,7 +598,10 @@ type MessageBatchNewParamsRequestParams struct {
 	//
 	// If the final message uses the `assistant` role, the response content will
 	// continue immediately from the content in that message. This can be used to
-	// constrain part of the model's response.
+	// constrain part of the model's response. This is called prefill. On models that
+	// don't support prefill, creating a message that ends with a partial `assistant`
+	// response returns a 400 error. See
+	// [Prefill not supported](https://platform.claude.com/docs/en/api/errors#prefill-not-supported).
 	//
 	// Example with a single `user` message:
 	//
@@ -604,25 +613,22 @@ type MessageBatchNewParamsRequestParams struct {
 	//
 	// ```json
 	// [
-	//
-	//	{ "role": "user", "content": "Hello there." },
-	//	{ "role": "assistant", "content": "Hi, I'm Claude. How can I help you?" },
-	//	{ "role": "user", "content": "Can you explain LLMs in plain English?" }
-	//
+	//   { "role": "user", "content": "Hello there." },
+	//   { "role": "assistant", "content": "Hi, I'm Claude. How can I help you?" },
+	//   { "role": "user", "content": "Can you explain LLMs in plain English?" }
 	// ]
 	// ```
 	//
-	// Example with a partially-filled response from Claude:
+	// Example with a partially-filled response from Claude, for models that support
+	// prefill:
 	//
 	// ```json
 	// [
-	//
-	//	{
-	//	  "role": "user",
-	//	  "content": "What's the Greek name for Sun? (A) Sol (B) Helios (C) Sun"
-	//	},
-	//	{ "role": "assistant", "content": "The best answer is (" }
-	//
+	//   {
+	//     "role": "user",
+	//     "content": "What's the Greek name for Sun? (A) Sol (B) Helios (C) Sun"
+	//   },
+	//   { "role": "assistant", "content": "The best answer is (" }
 	// ]
 	// ```
 	//
@@ -703,6 +709,16 @@ type MessageBatchNewParamsRequestParams struct {
 	TopP param.Opt[float64] `json:"top_p,omitzero"`
 	// Container identifier for reuse across requests.
 	Container MessageCreateParamsContainerUnion `json:"container,omitzero"`
+	// The inference speed mode for this request. `"fast"` enables high
+	// output-tokens-per-second inference.
+	//
+	// Some models require the `fast-mode-2026-02-01` beta header for any `speed`
+	// value. See
+	// [fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for
+	// which models.
+	//
+	// Any of "standard", "fast".
+	Speed string `json:"speed,omitzero"`
 	// Top-level cache control automatically applies a cache_control marker to the last
 	// cacheable block in the request.
 	CacheControl CacheControlEphemeralParam `json:"cache_control,omitzero"`
@@ -739,15 +755,16 @@ type MessageBatchNewParamsRequestParams struct {
 	// as specifying a particular goal or role. See our
 	// [guide to system prompts](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices#give-claude-a-role).
 	System []TextBlockParam `json:"system,omitzero"`
-	// Configuration for enabling Claude's extended thinking.
+	// Configuration for Claude's thinking.
 	//
-	// When enabled, responses include `thinking` content blocks showing Claude's
-	// thinking process before the final answer. Requires a minimum budget of 1,024
-	// tokens and counts towards your `max_tokens` limit.
+	// With `{"type": "adaptive"}`, Claude decides when and how much to think. With
+	// `{"type": "enabled"}` (manual extended thinking), you set a `budget_tokens` of
+	// at least 1,024. Thinking tokens count toward your `max_tokens` limit.
 	//
-	// See
-	// [extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking)
-	// for details.
+	// Which `type` values are accepted, and what happens when you omit `thinking`,
+	// depend on the model. See
+	// [thinking](https://platform.claude.com/docs/en/build-with-claude/thinking#configuring-thinking)
+	// for each model's behavior.
 	Thinking ThinkingConfigParamUnion `json:"thinking,omitzero"`
 	// How the model should use the provided tools. The model can use a specific tool,
 	// any available tool, decide by itself, or not use tools at all.
@@ -767,32 +784,30 @@ type MessageBatchNewParamsRequestParams struct {
 	//
 	// Each tool definition includes:
 	//
-	//   - `name`: Name of the tool.
-	//   - `description`: Optional, but strongly-recommended description of the tool.
-	//   - `input_schema`: [JSON schema](https://json-schema.org/draft/2020-12) for the
-	//     tool `input` shape that the model will produce in `tool_use` output content
-	//     blocks.
+	// - `name`: Name of the tool.
+	// - `description`: Optional, but strongly-recommended description of the tool.
+	// - `input_schema`: [JSON schema](https://json-schema.org/draft/2020-12) for the
+	//   tool `input` shape that the model will produce in `tool_use` output content
+	//   blocks.
 	//
 	// For example, if you defined `tools` as:
 	//
 	// ```json
 	// [
-	//
-	//	{
-	//	  "name": "get_stock_price",
-	//	  "description": "Get the current stock price for a given ticker symbol.",
-	//	  "input_schema": {
-	//	    "type": "object",
-	//	    "properties": {
-	//	      "ticker": {
-	//	        "type": "string",
-	//	        "description": "The stock ticker symbol, e.g. AAPL for Apple Inc."
-	//	      }
-	//	    },
-	//	    "required": ["ticker"]
-	//	  }
-	//	}
-	//
+	//   {
+	//     "name": "get_stock_price",
+	//     "description": "Get the current stock price for a given ticker symbol.",
+	//     "input_schema": {
+	//       "type": "object",
+	//       "properties": {
+	//         "ticker": {
+	//           "type": "string",
+	//           "description": "The stock ticker symbol, e.g. AAPL for Apple Inc."
+	//         }
+	//       },
+	//       "required": ["ticker"]
+	//     }
+	//   }
 	// ]
 	// ```
 	//
@@ -801,14 +816,12 @@ type MessageBatchNewParamsRequestParams struct {
 	//
 	// ```json
 	// [
-	//
-	//	{
-	//	  "type": "tool_use",
-	//	  "id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
-	//	  "name": "get_stock_price",
-	//	  "input": { "ticker": "^GSPC" }
-	//	}
-	//
+	//   {
+	//     "type": "tool_use",
+	//     "id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
+	//     "name": "get_stock_price",
+	//     "input": { "ticker": "^GSPC" }
+	//   }
 	// ]
 	// ```
 	//
@@ -818,13 +831,11 @@ type MessageBatchNewParamsRequestParams struct {
 	//
 	// ```json
 	// [
-	//
-	//	{
-	//	  "type": "tool_result",
-	//	  "tool_use_id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
-	//	  "content": "259.75 USD"
-	//	}
-	//
+	//   {
+	//     "type": "tool_result",
+	//     "tool_use_id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
+	//     "content": "259.75 USD"
+	//   }
 	// ]
 	// ```
 	//
@@ -850,6 +861,9 @@ func (r *MessageBatchNewParamsRequestParams) UnmarshalJSON(data []byte) error {
 func init() {
 	apijson.RegisterFieldValidator[MessageBatchNewParamsRequestParams](
 		"service_tier", "auto", "standard_only",
+	)
+	apijson.RegisterFieldValidator[MessageBatchNewParamsRequestParams](
+		"speed", "standard", "fast",
 	)
 }
 

@@ -39,8 +39,8 @@ func NewBetaOrganizationRateLimitService(opts ...option.RequestOption) (r BetaOr
 // List Messages API rate limits for your organization.
 //
 // Each entry corresponds to one rate-limit group (either a model family or an
-// API-surface category such as the Files API or Message Batches) and contains the
-// set of limiter values that apply to it.
+// API-surface category such as the Message Batches API or the web search tool) and
+// contains the set of limiter values that apply to it.
 //
 // When `limit` is omitted, every matching entry is returned in a single page; when
 // `limit` truncates the result, follow `next_page` to fetch the remaining entries.
@@ -49,6 +49,7 @@ func (r *BetaOrganizationRateLimitService) List(ctx context.Context, query BetaO
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	path := "v1/organizations/rate_limits?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.rate_limits.list", "/v1/organizations/rate_limits", "group_type", "limit", "model", "page"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, query, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -64,8 +65,8 @@ func (r *BetaOrganizationRateLimitService) List(ctx context.Context, query BetaO
 // List Messages API rate limits for your organization.
 //
 // Each entry corresponds to one rate-limit group (either a model family or an
-// API-surface category such as the Files API or Message Batches) and contains the
-// set of limiter values that apply to it.
+// API-surface category such as the Message Batches API or the web search tool) and
+// contains the set of limiter values that apply to it.
 //
 // When `limit` is omitted, every matching entry is returned in a single page; when
 // `limit` truncates the result, follow `next_page` to fetch the remaining entries.
@@ -75,7 +76,8 @@ func (r *BetaOrganizationRateLimitService) ListAutoPaging(ctx context.Context, q
 
 type BetaOrganizationRateLimit struct {
 	// Identifier of this rate-limit entry. It is stable within the organization and
-	// differs between organizations; the group's own identifier is `group.id`.
+	// differs between organizations; the group's own identifier is `group.id`. Pass it
+	// as `rate_limit_id` to set a workspace's overrides for this group.
 	ID string `json:"id" api:"required"`
 	// The rate-limit group this entry's limits apply to. Its `type` equals
 	// `group_type`.

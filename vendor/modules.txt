@@ -20,7 +20,7 @@ cloud.google.com/go/auth/oauth2adapt
 # cloud.google.com/go/compute/metadata v0.5.0
 ## explicit; go 1.20
 cloud.google.com/go/compute/metadata
-# github.com/anthropics/anthropic-sdk-go v1.78.0
+# github.com/anthropics/anthropic-sdk-go v1.84.0
 ## explicit; go 1.24
 github.com/anthropics/anthropic-sdk-go
 github.com/anthropics/anthropic-sdk-go/config
@@ -37,6 +37,8 @@ github.com/anthropics/anthropic-sdk-go/internal/paramutil
 github.com/anthropics/anthropic-sdk-go/internal/requestconfig
 github.com/anthropics/anthropic-sdk-go/internal/sendwindow
 github.com/anthropics/anthropic-sdk-go/internal/stainlessheader
+github.com/anthropics/anthropic-sdk-go/internal/telemetry
+github.com/anthropics/anthropic-sdk-go/internal/tracing
 github.com/anthropics/anthropic-sdk-go/option
 github.com/anthropics/anthropic-sdk-go/packages/jsonl
 github.com/anthropics/anthropic-sdk-go/packages/pagination
@@ -157,6 +159,10 @@ go.opencensus.io/trace
 go.opencensus.io/trace/internal
 go.opencensus.io/trace/propagation
 go.opencensus.io/trace/tracestate
+# go.opentelemetry.io/auto/sdk v1.1.0
+## explicit; go 1.22.0
+go.opentelemetry.io/auto/sdk
+go.opentelemetry.io/auto/sdk/internal/telemetry
 # go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.49.0
 ## explicit; go 1.20
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc
@@ -165,8 +171,8 @@ go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/inte
 ## explicit; go 1.20
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp/internal/semconvutil
-# go.opentelemetry.io/otel v1.24.0
-## explicit; go 1.20
+# go.opentelemetry.io/otel v1.33.0
+## explicit; go 1.22.0
 go.opentelemetry.io/otel
 go.opentelemetry.io/otel/attribute
 go.opentelemetry.io/otel/baggage
@@ -178,18 +184,22 @@ go.opentelemetry.io/otel/internal/global
 go.opentelemetry.io/otel/propagation
 go.opentelemetry.io/otel/semconv/v1.17.0
 go.opentelemetry.io/otel/semconv/v1.20.0
-# go.opentelemetry.io/otel/metric v1.24.0
-## explicit; go 1.20
+go.opentelemetry.io/otel/semconv/v1.26.0
+# go.opentelemetry.io/otel/metric v1.33.0
+## explicit; go 1.22.0
 go.opentelemetry.io/otel/metric
 go.opentelemetry.io/otel/metric/embedded
 go.opentelemetry.io/otel/metric/noop
-# go.opentelemetry.io/otel/trace v1.24.0
-## explicit; go 1.20
+# go.opentelemetry.io/otel/trace v1.33.0
+## explicit; go 1.22.0
 go.opentelemetry.io/otel/trace
 go.opentelemetry.io/otel/trace/embedded
-# go.yaml.in/yaml/v4 v4.0.0-rc.2
+go.opentelemetry.io/otel/trace/noop
+# go.yaml.in/yaml/v4 v4.0.0-rc.6
 ## explicit; go 1.18
 go.yaml.in/yaml/v4
+go.yaml.in/yaml/v4/internal/libyaml
+go.yaml.in/yaml/v4/plugin/limit
 # golang.org/x/crypto v0.40.0
 ## explicit; go 1.23.0
 golang.org/x/crypto/chacha20

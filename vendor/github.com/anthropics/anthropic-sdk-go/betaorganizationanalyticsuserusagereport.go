@@ -42,11 +42,12 @@ func NewBetaOrganizationAnalyticsUserUsageReportService(opts ...option.RequestOp
 // traffic, use the bucketed `/v1/organizations/analytics/usage_report` endpoint.
 // Available to organizations on a Claude Enterprise plan. Requires an API key with
 // the `read:analytics` scope.
-func (r *BetaOrganizationAnalyticsUserUsageReportService) List(ctx context.Context, query BetaOrganizationAnalyticsUserUsageReportListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaAnalyticsUsageUsersItem], err error) {
+func (r *BetaOrganizationAnalyticsUserUsageReportService) List(ctx context.Context, query BetaOrganizationAnalyticsUserUsageReportListParams, opts ...option.RequestOption) (res *pagination.ReportPageCursor[BetaAnalyticsUsageUsersItem], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	path := "v1/organizations/analytics/user_usage_report?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.analytics.user_usage_report.list", "/v1/organizations/analytics/user_usage_report", "bucket_width", "claude_tag_categories", "claude_tag_user_ids", "context_windows", "ending_at", "exclude_deleted_users", "group_by", "inference_geos", "limit", "models", "order", "order_by", "page", "products", "rbac_group_ids", "slack_channel_ids", "speeds", "starting_at", "user_ids"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, query, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -67,8 +68,8 @@ func (r *BetaOrganizationAnalyticsUserUsageReportService) List(ctx context.Conte
 // traffic, use the bucketed `/v1/organizations/analytics/usage_report` endpoint.
 // Available to organizations on a Claude Enterprise plan. Requires an API key with
 // the `read:analytics` scope.
-func (r *BetaOrganizationAnalyticsUserUsageReportService) ListAutoPaging(ctx context.Context, query BetaOrganizationAnalyticsUserUsageReportListParams, opts ...option.RequestOption) *pagination.PageCursorAutoPager[BetaAnalyticsUsageUsersItem] {
-	return pagination.NewPageCursorAutoPager(r.List(ctx, query, opts...))
+func (r *BetaOrganizationAnalyticsUserUsageReportService) ListAutoPaging(ctx context.Context, query BetaOrganizationAnalyticsUserUsageReportListParams, opts ...option.RequestOption) *pagination.ReportPageCursorAutoPager[BetaAnalyticsUsageUsersItem] {
+	return pagination.NewReportPageCursorAutoPager(r.List(ctx, query, opts...))
 }
 
 type BetaOrganizationAnalyticsUserUsageReportListParams struct {

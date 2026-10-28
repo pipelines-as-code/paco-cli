@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apiform"
@@ -86,12 +87,20 @@ func NewBetaOrganizationPluginService(opts ...option.RequestOption) (r BetaOrgan
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginService) New(ctx context.Context, params BetaOrganizationPluginNewParams, opts ...option.RequestOption) (res *BetaPlugin, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
 	path := "v1/organizations/plugins?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugins.create", "/v1/organizations/plugins"), requestconfig.WithSpanCreatedID("anthropic.organization.plugin.id", &res, func(created *BetaPlugin) string { return created.ID }))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -109,8 +118,15 @@ func (r *BetaOrganizationPluginService) New(ctx context.Context, params BetaOrga
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginService) Get(ctx context.Context, pluginID string, params BetaOrganizationPluginGetParams, opts ...option.RequestOption) (res *BetaPlugin, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
@@ -118,7 +134,8 @@ func (r *BetaOrganizationPluginService) Get(ctx context.Context, pluginID string
 		err = errors.New("missing required plugin_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/plugins/%s?beta=true", pluginID)
+	path := fmt.Sprintf("v1/organizations/plugins/%s?beta=true", url.PathEscape(pluginID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugins.retrieve", "/v1/organizations/plugins/{plugin_id}", "organization_id"), requestconfig.WithSpanAttribute("anthropic.organization.plugin.id", pluginID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &res, opts...)
 	return res, err
 }
@@ -155,8 +172,15 @@ func (r *BetaOrganizationPluginService) Get(ctx context.Context, pluginID string
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginService) Update(ctx context.Context, pluginID string, params BetaOrganizationPluginUpdateParams, opts ...option.RequestOption) (res *BetaPlugin, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
@@ -164,7 +188,8 @@ func (r *BetaOrganizationPluginService) Update(ctx context.Context, pluginID str
 		err = errors.New("missing required plugin_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/plugins/%s?beta=true", pluginID)
+	path := fmt.Sprintf("v1/organizations/plugins/%s?beta=true", url.PathEscape(pluginID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugins.update", "/v1/organizations/plugins/{plugin_id}"), requestconfig.WithSpanAttribute("anthropic.organization.plugin.id", pluginID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -190,12 +215,20 @@ func (r *BetaOrganizationPluginService) Update(ctx context.Context, pluginID str
 // readiness enabled.
 func (r *BetaOrganizationPluginService) List(ctx context.Context, params BetaOrganizationPluginListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaPlugin], err error) {
 	var raw *http.Response
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01"), option.WithResponseInto(&raw)}, opts...)
 	path := "v1/organizations/plugins?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugins.list", "/v1/organizations/plugins", "created_at[gt]", "created_at[gte]", "created_at[lt]", "created_at[lte]", "limit", "marketplace_id", "organization_id", "owner_type", "owner_user_id", "page"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -253,8 +286,15 @@ func (r *BetaOrganizationPluginService) ListAutoPaging(ctx context.Context, para
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginService) Delete(ctx context.Context, pluginID string, body BetaOrganizationPluginDeleteParams, opts ...option.RequestOption) (res *BetaDeletedPlugin, err error) {
-	for _, v := range body.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(body.Betas) > 0 {
+		headerValues := make([]string, len(body.Betas))
+		for i, v := range body.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
@@ -262,7 +302,8 @@ func (r *BetaOrganizationPluginService) Delete(ctx context.Context, pluginID str
 		err = errors.New("missing required plugin_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/plugins/%s?beta=true", pluginID)
+	path := fmt.Sprintf("v1/organizations/plugins/%s?beta=true", url.PathEscape(pluginID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugins.delete", "/v1/organizations/plugins/{plugin_id}"), requestconfig.WithSpanAttribute("anthropic.organization.plugin.id", pluginID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &res, opts...)
 	return res, err
 }
@@ -304,7 +345,8 @@ type BetaPlugin struct {
 	DisplayName string `json:"display_name" api:"required"`
 	// The newest version.
 	LatestVersionID string `json:"latest_version_id" api:"required"`
-	// The version string the served version's manifest declares.
+	// The served version's manifest `version`, normalized for display, or `null` (the
+	// Plugin Version's `manifest_version` says how and when).
 	ManifestVersion string `json:"manifest_version" api:"required"`
 	// The ID of the plugin marketplace the Plugin lives in.
 	MarketplaceID string `json:"marketplace_id" api:"required"`
@@ -327,9 +369,21 @@ type BetaPlugin struct {
 	// Who owns the Plugin: the organization, or the member whose personal plugin
 	// marketplace it lives in.
 	Owner BetaPluginOwnerUnion `json:"owner" api:"required"`
-	// How far the served version reaches: `remote` when it declares an MCP server or a
-	// CLI, `privileged` when it declares a hook, monitor, language server or settings
-	// but nothing remote, `contained` otherwise; null when not classifiable.
+	// How far the served version reaches, or `null` if it is not classified.
+	//
+	// `remote` means it declares an MCP server or a CLI. `privileged` means it
+	// declares no MCP server or CLI, but declares a hook, monitor, language server, or
+	// settings, or has a skill, command, or other Markdown file whose frontmatter
+	// pre-approves tools (`allowed-tools` with any value other than an empty one or
+	// one that names only `AskUserQuestion`, `TodoWrite`, and `ToolSearch`). Otherwise
+	// it is `contained`.
+	//
+	// If the frontmatter of a skill, command, or other Markdown file that could change
+	// the value could not be read, or was past a size limit, the version is `null` or
+	// `privileged` (or `remote`, if it declares an MCP server or a CLI), not
+	// `contained`. The value is normally worked out when a version is stored, under
+	// the rules of that time, so an older version can be `null`, or `contained` where
+	// the same files stored today would be `privileged` or `null`.
 	//
 	// Any of "contained", "privileged", "remote".
 	Reach BetaPluginReach `json:"reach" api:"required"`
@@ -520,9 +574,21 @@ func (r *BetaPluginOwnerUnion) UnmarshalJSON(data []byte) error {
 	return apijson.UnmarshalRoot(data, r)
 }
 
-// How far the served version reaches: `remote` when it declares an MCP server or a
-// CLI, `privileged` when it declares a hook, monitor, language server or settings
-// but nothing remote, `contained` otherwise; null when not classifiable.
+// How far the served version reaches, or `null` if it is not classified.
+//
+// `remote` means it declares an MCP server or a CLI. `privileged` means it
+// declares no MCP server or CLI, but declares a hook, monitor, language server, or
+// settings, or has a skill, command, or other Markdown file whose frontmatter
+// pre-approves tools (`allowed-tools` with any value other than an empty one or
+// one that names only `AskUserQuestion`, `TodoWrite`, and `ToolSearch`). Otherwise
+// it is `contained`.
+//
+// If the frontmatter of a skill, command, or other Markdown file that could change
+// the value could not be read, or was past a size limit, the version is `null` or
+// `privileged` (or `remote`, if it declares an MCP server or a CLI), not
+// `contained`. The value is normally worked out when a version is stored, under
+// the rules of that time, so an older version can be `null`, or `contained` where
+// the same files stored today would be `privileged` or `null`.
 type BetaPluginReach string
 
 const (

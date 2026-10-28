@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apijson"
@@ -47,11 +48,19 @@ func NewBetaOrganizationWorkspaceService(opts ...option.RequestOption) (r BetaOr
 
 // Create Workspace
 func (r *BetaOrganizationWorkspaceService) New(ctx context.Context, params BetaOrganizationWorkspaceNewParams, opts ...option.RequestOption) (res *BetaWorkspace, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	path := "v1/organizations/workspaces?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.workspaces.create", "/v1/organizations/workspaces"), requestconfig.WithSpanCreatedID("anthropic.organization.workspace.id", &res, func(created *BetaWorkspace) string { return created.ID }))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -63,7 +72,8 @@ func (r *BetaOrganizationWorkspaceService) Get(ctx context.Context, workspaceID 
 		err = errors.New("missing required workspace_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/workspaces/%s?beta=true", workspaceID)
+	path := fmt.Sprintf("v1/organizations/workspaces/%s?beta=true", url.PathEscape(workspaceID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.workspaces.retrieve", "/v1/organizations/workspaces/{workspace_id}"), requestconfig.WithSpanAttribute("anthropic.organization.workspace.id", workspaceID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &res, opts...)
 	return res, err
 }
@@ -75,7 +85,8 @@ func (r *BetaOrganizationWorkspaceService) Update(ctx context.Context, workspace
 		err = errors.New("missing required workspace_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/workspaces/%s?beta=true", workspaceID)
+	path := fmt.Sprintf("v1/organizations/workspaces/%s?beta=true", url.PathEscape(workspaceID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.workspaces.update", "/v1/organizations/workspaces/{workspace_id}"), requestconfig.WithSpanAttribute("anthropic.organization.workspace.id", workspaceID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, body, &res, opts...)
 	return res, err
 }
@@ -86,6 +97,7 @@ func (r *BetaOrganizationWorkspaceService) List(ctx context.Context, query BetaO
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	path := "v1/organizations/workspaces?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.workspaces.list", "/v1/organizations/workspaces", "after_id", "before_id", "include_archived", "include_default", "limit"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, query, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -110,7 +122,8 @@ func (r *BetaOrganizationWorkspaceService) Archive(ctx context.Context, workspac
 		err = errors.New("missing required workspace_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/workspaces/%s/archive?beta=true", workspaceID)
+	path := fmt.Sprintf("v1/organizations/workspaces/%s/archive?beta=true", url.PathEscape(workspaceID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.workspaces.archive", "/v1/organizations/workspaces/{workspace_id}/archive"), requestconfig.WithSpanAttribute("anthropic.organization.workspace.id", workspaceID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, nil, &res, opts...)
 	return res, err
 }
@@ -525,6 +538,8 @@ type BetaOrganizationWorkspaceListParams struct {
 	BeforeID param.Opt[string] `query:"before_id,omitzero" json:"-"`
 	// Whether to include Workspaces that have been archived in the response
 	IncludeArchived param.Opt[bool] `query:"include_archived,omitzero" json:"-"`
+	// Whether to include the organization's default Workspace in the response
+	IncludeDefault param.Opt[bool] `query:"include_default,omitzero" json:"-"`
 	// Number of items to return per page.
 	//
 	// Defaults to `20`. Ranges from `1` to `1000`.

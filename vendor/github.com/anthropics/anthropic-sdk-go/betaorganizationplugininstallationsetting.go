@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apijson"
@@ -59,8 +60,15 @@ func NewBetaOrganizationPluginInstallationSettingService(opts ...option.RequestO
 // readiness enabled.
 func (r *BetaOrganizationPluginInstallationSettingService) List(ctx context.Context, pluginID string, params BetaOrganizationPluginInstallationSettingListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaPluginInstallationSetting], err error) {
 	var raw *http.Response
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01"), option.WithResponseInto(&raw)}, opts...)
@@ -68,7 +76,8 @@ func (r *BetaOrganizationPluginInstallationSettingService) List(ctx context.Cont
 		err = errors.New("missing required plugin_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/plugins/%s/installation_settings?beta=true", pluginID)
+	path := fmt.Sprintf("v1/organizations/plugins/%s/installation_settings?beta=true", url.PathEscape(pluginID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugins.installation_settings.list", "/v1/organizations/plugins/{plugin_id}/installation_settings", "limit", "organization_id", "page", "target_type"), requestconfig.WithSpanAttribute("anthropic.organization.plugin.id", pluginID))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -130,8 +139,15 @@ func (r *BetaOrganizationPluginInstallationSettingService) ListAutoPaging(ctx co
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginInstallationSettingService) Remove(ctx context.Context, target string, params BetaOrganizationPluginInstallationSettingRemoveParams, opts ...option.RequestOption) (res *BetaDeletedPluginInstallationSetting, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
@@ -143,7 +159,8 @@ func (r *BetaOrganizationPluginInstallationSettingService) Remove(ctx context.Co
 		err = errors.New("missing required target parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/plugins/%s/installation_settings/%s?beta=true", params.PluginID, target)
+	path := fmt.Sprintf("v1/organizations/plugins/%s/installation_settings/%s?beta=true", url.PathEscape(params.PluginID), url.PathEscape(target))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugins.installation_settings.remove", "/v1/organizations/plugins/{plugin_id}/installation_settings/{target}"), requestconfig.WithSpanAttribute("anthropic.organization.plugin.id", params.PluginID), requestconfig.WithSpanAttribute("anthropic.organization.plugin.installation_setting.id", target))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &res, opts...)
 	return res, err
 }
@@ -171,8 +188,15 @@ func (r *BetaOrganizationPluginInstallationSettingService) Remove(ctx context.Co
 // Platform (Claude Console) organizations, or to organizations with HIPAA
 // readiness enabled.
 func (r *BetaOrganizationPluginInstallationSettingService) Set(ctx context.Context, target string, params BetaOrganizationPluginInstallationSettingSetParams, opts ...option.RequestOption) (res *BetaPluginInstallationSetting, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "ce-plugins-2026-09-01")}, opts...)
@@ -184,7 +208,8 @@ func (r *BetaOrganizationPluginInstallationSettingService) Set(ctx context.Conte
 		err = errors.New("missing required target parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/plugins/%s/installation_settings/%s?beta=true", params.PluginID, target)
+	path := fmt.Sprintf("v1/organizations/plugins/%s/installation_settings/%s?beta=true", url.PathEscape(params.PluginID), url.PathEscape(target))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.plugins.installation_settings.set", "/v1/organizations/plugins/{plugin_id}/installation_settings/{target}"), requestconfig.WithSpanAttribute("anthropic.organization.plugin.id", params.PluginID), requestconfig.WithSpanAttribute("anthropic.organization.plugin.installation_setting.id", target))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }

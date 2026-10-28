@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apijson"
@@ -40,8 +41,15 @@ func NewBetaDeploymentRunService(opts ...option.RequestOption) (r BetaDeployment
 
 // Get Deployment Run
 func (r *BetaDeploymentRunService) Get(ctx context.Context, deploymentRunID string, query BetaDeploymentRunGetParams, opts ...option.RequestOption) (res *BetaManagedAgentsDeploymentRun, err error) {
-	for _, v := range query.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(query.Betas) > 0 {
+		headerValues := make([]string, len(query.Betas))
+		for i, v := range query.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(query.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", query.WorkspaceID.Value)))
@@ -52,7 +60,8 @@ func (r *BetaDeploymentRunService) Get(ctx context.Context, deploymentRunID stri
 		err = errors.New("missing required deployment_run_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/deployment_runs/%s?beta=true", deploymentRunID)
+	path := fmt.Sprintf("v1/deployment_runs/%s?beta=true", url.PathEscape(deploymentRunID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.deployment_runs.retrieve", "/v1/deployment_runs/{deployment_run_id}"), requestconfig.WithSpanAttribute("anthropic.deployment_run.id", deploymentRunID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &res, opts...)
 	return res, err
 }
@@ -60,8 +69,15 @@ func (r *BetaDeploymentRunService) Get(ctx context.Context, deploymentRunID stri
 // List Deployment Runs
 func (r *BetaDeploymentRunService) List(ctx context.Context, params BetaDeploymentRunListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaManagedAgentsDeploymentRun], err error) {
 	var raw *http.Response
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -69,6 +85,7 @@ func (r *BetaDeploymentRunService) List(ctx context.Context, params BetaDeployme
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "managed-agents-2026-04-01"), option.WithResponseInto(&raw)}, opts...)
 	path := "v1/deployment_runs?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.deployment_runs.list", "/v1/deployment_runs", "created_at[gt]", "created_at[gte]", "created_at[lt]", "created_at[lte]", "deployment_id", "has_error", "limit", "page", "trigger_type"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -922,7 +939,8 @@ type BetaDeploymentRunGetParams struct {
 	// credential that belongs to a specific Workspace may omit it; if sent, it must
 	// match that Workspace.
 	WorkspaceID param.Opt[string] `header:"anthropic-workspace-id,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `managed-agents-2026-04-01` in this
+	// header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }
@@ -959,7 +977,8 @@ type BetaDeploymentRunListParams struct {
 	//
 	// Any of "schedule", "manual".
 	TriggerType BetaManagedAgentsTriggerType `query:"trigger_type,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `managed-agents-2026-04-01` in this
+	// header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }

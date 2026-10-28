@@ -63,6 +63,7 @@ func NewOrganizationFederationRuleService(opts ...option.RequestOption) (r Organ
 func (r *OrganizationFederationRuleService) New(ctx context.Context, body OrganizationFederationRuleNewParams, opts ...option.RequestOption) (res *FederationRule, err error) {
 	opts = slices.Concat(r.Options, opts)
 	path := "v1/organizations/federation_rules"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.federation.rules.create", "/v1/organizations/federation_rules"), requestconfig.WithSpanCreatedID("anthropic.organization.federation_rule.id", &res, func(created *FederationRule) string { return created.ID }))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, body, &res, opts...)
 	return res, err
 }
@@ -79,7 +80,8 @@ func (r *OrganizationFederationRuleService) Get(ctx context.Context, federationR
 		err = errors.New("missing required federation_rule_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/federation_rules/%s", federationRuleID)
+	path := fmt.Sprintf("v1/organizations/federation_rules/%s", url.PathEscape(federationRuleID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.federation.rules.retrieve", "/v1/organizations/federation_rules/{federation_rule_id}"), requestconfig.WithSpanAttribute("anthropic.organization.federation_rule.id", federationRuleID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &res, opts...)
 	return res, err
 }
@@ -111,7 +113,8 @@ func (r *OrganizationFederationRuleService) Update(ctx context.Context, federati
 		err = errors.New("missing required federation_rule_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/federation_rules/%s", federationRuleID)
+	path := fmt.Sprintf("v1/organizations/federation_rules/%s", url.PathEscape(federationRuleID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.federation.rules.update", "/v1/organizations/federation_rules/{federation_rule_id}"), requestconfig.WithSpanAttribute("anthropic.organization.federation_rule.id", federationRuleID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, body, &res, opts...)
 	return res, err
 }
@@ -130,6 +133,7 @@ func (r *OrganizationFederationRuleService) List(ctx context.Context, query Orga
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	path := "v1/organizations/federation_rules"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.federation.rules.list", "/v1/organizations/federation_rules", "include_archived", "issuer_id", "limit", "page"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, query, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -174,7 +178,8 @@ func (r *OrganizationFederationRuleService) Archive(ctx context.Context, federat
 		err = errors.New("missing required federation_rule_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/federation_rules/%s/archive", federationRuleID)
+	path := fmt.Sprintf("v1/organizations/federation_rules/%s/archive", url.PathEscape(federationRuleID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.federation.rules.archive", "/v1/organizations/federation_rules/{federation_rule_id}/archive"), requestconfig.WithSpanAttribute("anthropic.organization.federation_rule.id", federationRuleID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, nil, &res, opts...)
 	return res, err
 }
@@ -215,8 +220,9 @@ type FederationRule struct {
 	Name string `json:"name" api:"required"`
 	// Space-separated OAuth scopes granted on the minted token.
 	OAuthScope string `json:"oauth_scope" api:"required"`
-	// Identity that tokens minted via this rule act as. Currently always a
-	// `service_account` target.
+	// What this rule targets. Check `type` before reading the other fields. Tokens
+	// minted via a rule whose target `type` is `service_account` act as that service
+	// account.
 	Target ServiceAccountTarget `json:"target" api:"required"`
 	// Lifetime in seconds of access tokens minted via this rule. Minted tokens are
 	// capped at `max(60, min(this value, 2 × remaining assertion validity))` seconds.

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apijson"
 	"github.com/anthropics/anthropic-sdk-go/internal/apiquery"
@@ -45,8 +46,15 @@ func NewBetaEnvironmentWorkService(opts ...option.RequestOption) (r BetaEnvironm
 //
 // Retrieve detailed information about a specific work item.
 func (r *BetaEnvironmentWorkService) Get(ctx context.Context, workID string, params BetaEnvironmentWorkGetParams, opts ...option.RequestOption) (res *BetaSelfHostedWork, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -61,7 +69,8 @@ func (r *BetaEnvironmentWorkService) Get(ctx context.Context, workID string, par
 		err = errors.New("missing required work_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/environments/%s/work/%s?beta=true", params.EnvironmentID, workID)
+	path := fmt.Sprintf("v1/environments/%s/work/%s?beta=true", url.PathEscape(params.EnvironmentID), url.PathEscape(workID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.environments.work.retrieve", "/v1/environments/{environment_id}/work/{work_id}"), requestconfig.WithSpanAttribute("anthropic.environment.id", params.EnvironmentID), requestconfig.WithSpanAttribute("anthropic.environment.work.id", workID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &res, opts...)
 	return res, err
 }
@@ -73,8 +82,15 @@ func (r *BetaEnvironmentWorkService) Get(ctx context.Context, workID string, par
 //
 // Update work item metadata with merge semantics.
 func (r *BetaEnvironmentWorkService) Update(ctx context.Context, workID string, params BetaEnvironmentWorkUpdateParams, opts ...option.RequestOption) (res *BetaSelfHostedWork, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -89,7 +105,8 @@ func (r *BetaEnvironmentWorkService) Update(ctx context.Context, workID string, 
 		err = errors.New("missing required work_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/environments/%s/work/%s?beta=true", params.EnvironmentID, workID)
+	path := fmt.Sprintf("v1/environments/%s/work/%s?beta=true", url.PathEscape(params.EnvironmentID), url.PathEscape(workID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.environments.work.update", "/v1/environments/{environment_id}/work/{work_id}"), requestconfig.WithSpanAttribute("anthropic.environment.id", params.EnvironmentID), requestconfig.WithSpanAttribute("anthropic.environment.work.id", workID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -102,8 +119,15 @@ func (r *BetaEnvironmentWorkService) Update(ctx context.Context, workID string, 
 // List work items in an environment.
 func (r *BetaEnvironmentWorkService) List(ctx context.Context, environmentID string, params BetaEnvironmentWorkListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaSelfHostedWork], err error) {
 	var raw *http.Response
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "managed-agents-2026-04-01"), option.WithResponseInto(&raw)}, opts...)
@@ -111,7 +135,8 @@ func (r *BetaEnvironmentWorkService) List(ctx context.Context, environmentID str
 		err = errors.New("missing required environment_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/environments/%s/work?beta=true", environmentID)
+	path := fmt.Sprintf("v1/environments/%s/work?beta=true", url.PathEscape(environmentID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.environments.work.list", "/v1/environments/{environment_id}/work", "limit", "page"), requestconfig.WithSpanAttribute("anthropic.environment.id", environmentID))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -142,8 +167,15 @@ func (r *BetaEnvironmentWorkService) ListAutoPaging(ctx context.Context, environ
 // Acknowledge receipt of a work item, transitioning it from 'queued' to 'starting'
 // and removing it from the queue.
 func (r *BetaEnvironmentWorkService) Ack(ctx context.Context, workID string, params BetaEnvironmentWorkAckParams, opts ...option.RequestOption) (res *BetaSelfHostedWork, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "managed-agents-2026-04-01")}, opts...)
@@ -155,7 +187,8 @@ func (r *BetaEnvironmentWorkService) Ack(ctx context.Context, workID string, par
 		err = errors.New("missing required work_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/environments/%s/work/%s/ack?beta=true", params.EnvironmentID, workID)
+	path := fmt.Sprintf("v1/environments/%s/work/%s/ack?beta=true", url.PathEscape(params.EnvironmentID), url.PathEscape(workID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.environments.work.ack", "/v1/environments/{environment_id}/work/{work_id}/ack"), requestconfig.WithSpanAttribute("anthropic.environment.id", params.EnvironmentID), requestconfig.WithSpanAttribute("anthropic.environment.work.id", workID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, nil, &res, opts...)
 	return res, err
 }
@@ -167,8 +200,15 @@ func (r *BetaEnvironmentWorkService) Ack(ctx context.Context, workID string, par
 //
 // Record a heartbeat for a work item to maintain the lease.
 func (r *BetaEnvironmentWorkService) Heartbeat(ctx context.Context, workID string, params BetaEnvironmentWorkHeartbeatParams, opts ...option.RequestOption) (res *BetaSelfHostedWorkHeartbeatResponse, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "managed-agents-2026-04-01")}, opts...)
@@ -180,7 +220,8 @@ func (r *BetaEnvironmentWorkService) Heartbeat(ctx context.Context, workID strin
 		err = errors.New("missing required work_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/environments/%s/work/%s/heartbeat?beta=true", params.EnvironmentID, workID)
+	path := fmt.Sprintf("v1/environments/%s/work/%s/heartbeat?beta=true", url.PathEscape(params.EnvironmentID), url.PathEscape(workID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.environments.work.heartbeat", "/v1/environments/{environment_id}/work/{work_id}/heartbeat", "desired_ttl_seconds", "expected_last_heartbeat"), requestconfig.WithSpanAttribute("anthropic.environment.id", params.EnvironmentID), requestconfig.WithSpanAttribute("anthropic.environment.work.id", workID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -192,8 +233,15 @@ func (r *BetaEnvironmentWorkService) Heartbeat(ctx context.Context, workID strin
 //
 // Long poll for work items in the queue.
 func (r *BetaEnvironmentWorkService) Poll(ctx context.Context, environmentID string, params BetaEnvironmentWorkPollParams, opts ...option.RequestOption) (res *BetaSelfHostedWork, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.AnthropicWorkerID) {
 		opts = append(opts, option.WithHeader("Anthropic-Worker-ID", fmt.Sprintf("%v", params.AnthropicWorkerID.Value)))
@@ -204,15 +252,23 @@ func (r *BetaEnvironmentWorkService) Poll(ctx context.Context, environmentID str
 		err = errors.New("missing required environment_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/environments/%s/work/poll?beta=true", environmentID)
+	path := fmt.Sprintf("v1/environments/%s/work/poll?beta=true", url.PathEscape(environmentID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.environments.work.poll", "/v1/environments/{environment_id}/work/poll", "block_ms", "reclaim_older_than_ms"), requestconfig.WithSpanAttribute("anthropic.environment.id", environmentID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &res, opts...)
 	return res, err
 }
 
 // Get statistics about the work queue for an environment.
 func (r *BetaEnvironmentWorkService) Stats(ctx context.Context, environmentID string, query BetaEnvironmentWorkStatsParams, opts ...option.RequestOption) (res *BetaSelfHostedWorkQueueStats, err error) {
-	for _, v := range query.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(query.Betas) > 0 {
+		headerValues := make([]string, len(query.Betas))
+		for i, v := range query.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(query.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", query.WorkspaceID.Value)))
@@ -223,7 +279,8 @@ func (r *BetaEnvironmentWorkService) Stats(ctx context.Context, environmentID st
 		err = errors.New("missing required environment_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/environments/%s/work/stats?beta=true", environmentID)
+	path := fmt.Sprintf("v1/environments/%s/work/stats?beta=true", url.PathEscape(environmentID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.environments.work.stats", "/v1/environments/{environment_id}/work/stats"), requestconfig.WithSpanAttribute("anthropic.environment.id", environmentID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &res, opts...)
 	return res, err
 }
@@ -235,8 +292,15 @@ func (r *BetaEnvironmentWorkService) Stats(ctx context.Context, environmentID st
 //
 // Stop a work item, initiating graceful or forced shutdown.
 func (r *BetaEnvironmentWorkService) Stop(ctx context.Context, workID string, params BetaEnvironmentWorkStopParams, opts ...option.RequestOption) (res *BetaSelfHostedWork, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -251,7 +315,8 @@ func (r *BetaEnvironmentWorkService) Stop(ctx context.Context, workID string, pa
 		err = errors.New("missing required work_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/environments/%s/work/%s/stop?beta=true", params.EnvironmentID, workID)
+	path := fmt.Sprintf("v1/environments/%s/work/%s/stop?beta=true", url.PathEscape(params.EnvironmentID), url.PathEscape(workID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.environments.work.stop", "/v1/environments/{environment_id}/work/{work_id}/stop"), requestconfig.WithSpanAttribute("anthropic.environment.id", params.EnvironmentID), requestconfig.WithSpanAttribute("anthropic.environment.work.id", workID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }

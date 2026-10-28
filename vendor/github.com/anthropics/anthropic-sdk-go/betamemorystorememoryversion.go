@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apijson"
@@ -39,10 +40,17 @@ func NewBetaMemoryStoreMemoryVersionService(opts ...option.RequestOption) (r Bet
 	return
 }
 
-// Retrieve a memory version
+// Retrieve a Memory Version
 func (r *BetaMemoryStoreMemoryVersionService) Get(ctx context.Context, memoryVersionID string, params BetaMemoryStoreMemoryVersionGetParams, opts ...option.RequestOption) (res *BetaManagedAgentsMemoryVersion, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -57,16 +65,24 @@ func (r *BetaMemoryStoreMemoryVersionService) Get(ctx context.Context, memoryVer
 		err = errors.New("missing required memory_version_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/memory_stores/%s/memory_versions/%s?beta=true", params.MemoryStoreID, memoryVersionID)
+	path := fmt.Sprintf("v1/memory_stores/%s/memory_versions/%s?beta=true", url.PathEscape(params.MemoryStoreID), url.PathEscape(memoryVersionID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.memory_stores.memory_versions.retrieve", "/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}", "view"), requestconfig.WithSpanAttribute("gen_ai.memory.store.id", params.MemoryStoreID), requestconfig.WithSpanAttribute("anthropic.memory_store.memory_version.id", memoryVersionID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &res, opts...)
 	return res, err
 }
 
-// List memory versions
+// List Memory Versions
 func (r *BetaMemoryStoreMemoryVersionService) List(ctx context.Context, memoryStoreID string, params BetaMemoryStoreMemoryVersionListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaManagedAgentsMemoryVersion], err error) {
 	var raw *http.Response
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -77,7 +93,8 @@ func (r *BetaMemoryStoreMemoryVersionService) List(ctx context.Context, memorySt
 		err = errors.New("missing required memory_store_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/memory_stores/%s/memory_versions?beta=true", memoryStoreID)
+	path := fmt.Sprintf("v1/memory_stores/%s/memory_versions?beta=true", url.PathEscape(memoryStoreID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.memory_stores.memory_versions.list", "/v1/memory_stores/{memory_store_id}/memory_versions", "api_key_id", "created_at[gte]", "created_at[lte]", "limit", "memory_id", "operation", "page", "service_account_id", "session_id", "view"), requestconfig.WithSpanAttribute("gen_ai.memory.store.id", memoryStoreID))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -90,15 +107,22 @@ func (r *BetaMemoryStoreMemoryVersionService) List(ctx context.Context, memorySt
 	return res, nil
 }
 
-// List memory versions
+// List Memory Versions
 func (r *BetaMemoryStoreMemoryVersionService) ListAutoPaging(ctx context.Context, memoryStoreID string, params BetaMemoryStoreMemoryVersionListParams, opts ...option.RequestOption) *pagination.PageCursorAutoPager[BetaManagedAgentsMemoryVersion] {
 	return pagination.NewPageCursorAutoPager(r.List(ctx, memoryStoreID, params, opts...))
 }
 
-// Redact a memory version
+// Redact a Memory Version
 func (r *BetaMemoryStoreMemoryVersionService) Redact(ctx context.Context, memoryVersionID string, params BetaMemoryStoreMemoryVersionRedactParams, opts ...option.RequestOption) (res *BetaManagedAgentsMemoryVersion, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -113,7 +137,8 @@ func (r *BetaMemoryStoreMemoryVersionService) Redact(ctx context.Context, memory
 		err = errors.New("missing required memory_version_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/memory_stores/%s/memory_versions/%s/redact?beta=true", params.MemoryStoreID, memoryVersionID)
+	path := fmt.Sprintf("v1/memory_stores/%s/memory_versions/%s/redact?beta=true", url.PathEscape(params.MemoryStoreID), url.PathEscape(memoryVersionID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.memory_stores.memory_versions.redact", "/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact"), requestconfig.WithSpanAttribute("gen_ai.memory.store.id", params.MemoryStoreID), requestconfig.WithSpanAttribute("anthropic.memory_store.memory_version.id", memoryVersionID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, nil, &res, opts...)
 	return res, err
 }
@@ -238,23 +263,30 @@ const (
 	BetaManagedAgentsAPIActorTypeAPIActor BetaManagedAgentsAPIActorType = "api_actor"
 )
 
-// A `memory_version` object: one immutable, attributed row in a memory's
-// append-only history. Every non-no-op mutation to a memory produces a new
-// version. Versions belong to the store (not the individual memory) and are not
-// deleted with the memory; each version is retained for at least the version
-// retention period after it was written, unless the store itself is deleted.
-// Retrieving a redacted version returns 200 with `content`, `path`,
-// `content_size_bytes`, and `content_sha256` set to `null`; branch on
-// `redacted_at`, not HTTP status.
+// One entry in a memory's history, recording a single change and who made it.
+//
+// Every change to a memory adds one version. Only redaction can change a version
+// after that. Versions belong to the memory store and stay after the memory is
+// deleted. Each version is retained for at least the version retention period
+// after it was written, unless the store itself is deleted.
+//
+// Retrieving a redacted version succeeds, with `content`, `path`,
+// `content_size_bytes`, and `content_sha256` set to `null`. Check `redacted_at` to
+// find out whether a version was redacted.
+//
+// See the
+// [memory guide](https://platform.claude.com/docs/en/managed-agents/memory#audit-memory-changes)
+// to learn more about memory versions.
 type BetaManagedAgentsMemoryVersion struct {
 	// Unique identifier for this version (a `memver_...` value).
 	ID string `json:"id" api:"required"`
 	// When this version was written, in RFC 3339 format.
 	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
-	// ID of the memory this version snapshots (a `mem_...` value). Remains valid after
-	// the memory is deleted; pass it as `memory_id` to
-	// [List memory versions](/en/api/beta/memory_stores/memory_versions/list) to
-	// retrieve the memory's retained versions, including the `deleted` row while the
+	// The ID of the memory that this version belongs to (`mem_...`).
+	//
+	// The ID stays valid after the memory is deleted. Pass it as `memory_id` to
+	// [List Memory Versions](https://platform.claude.com/docs/en/api/beta/memory_stores/memory_versions/list)
+	// to get the memory's retained versions, including its `deleted` version while the
 	// lineage is retained.
 	MemoryID string `json:"memory_id" api:"required"`
 	// ID of the memory store this version belongs to (a `memstore_...` value).
@@ -275,21 +307,28 @@ type BetaManagedAgentsMemoryVersion struct {
 	// Size of `content` in bytes as of this version. `null` when `redacted_at` is set
 	// or `operation` is `deleted`. Populated regardless of `view` otherwise.
 	ContentSizeBytes int64 `json:"content_size_bytes" api:"nullable"`
-	// Who performed this write: one of `session_actor`, `api_actor`, `user_actor`, or
-	// `service_account_actor`; `null` when no writer is recorded. Captured at write
-	// time and preserved through redaction. A `session_actor` is an agent writing
-	// through the store's mounted filesystem at `/mnt/memory/`. The API key that
-	// created that session is not recorded on agent writes, so attribution names who
-	// made the write, not who is ultimately responsible; look up session provenance
-	// via the [Sessions API](/en/api/beta/sessions/retrieve).
+	// Who made this change to the memory, or `null` if the author wasn't recorded.
+	//
+	// Redacting the version doesn't change this field. A `session_actor` here is an
+	// agent that wrote through the store's mounted filesystem at `/mnt/memory/`. The
+	// version doesn't record the API key that created that session. So the author in
+	// `created_by` is who made the change, not who is ultimately responsible for it.
+	//
+	// You can
+	// [retrieve the session](https://platform.claude.com/docs/en/api/beta/sessions/retrieve)
+	// to learn more about where the change came from.
 	CreatedBy BetaManagedAgentsActorUnion `json:"created_by"`
 	// The memory's path at the time of this write. `null` if and only if `redacted_at`
 	// is set.
 	Path string `json:"path" api:"nullable"`
-	// When this version was redacted, in RFC 3339 format, or `null` if it has not been
-	// redacted. When set, `content`, `path`, `content_size_bytes`, and
-	// `content_sha256` are all `null`. See
-	// [Redact a memory version](/en/api/beta/memory_stores/memory_versions/redact).
+	// When the version was redacted, in RFC 3339, or `null` if it hasn't been.
+	//
+	// When set, `content`, `path`, `content_size_bytes`, and `content_sha256` are
+	// `null`.
+	//
+	// See the
+	// [memory guide](https://platform.claude.com/docs/en/managed-agents/memory#redact-a-version)
+	// to learn more about redaction.
 	RedactedAt time.Time `json:"redacted_at" api:"nullable" format:"date-time"`
 	// Who redacted this version, or `null` if it has not been redacted. In practice
 	// always an `api_actor`, `user_actor`, or `service_account_actor` (agents do not
@@ -327,8 +366,10 @@ const (
 	BetaManagedAgentsMemoryVersionTypeMemoryVersion BetaManagedAgentsMemoryVersionType = "memory_version"
 )
 
-// The kind of mutation a `memory_version` records. Every non-no-op mutation to a
-// memory appends exactly one version row with one of these values.
+// The kind of change that a memory version records.
+//
+// Every change to a memory adds one version. If you update a memory and nothing
+// changes, the memory doesn't get a new version.
 type BetaManagedAgentsMemoryVersionOperation string
 
 const (
@@ -431,15 +472,16 @@ type BetaMemoryStoreMemoryVersionGetParams struct {
 	// credential that belongs to a specific Workspace may omit it; if sent, it must
 	// match that Workspace.
 	WorkspaceID param.Opt[string] `header:"anthropic-workspace-id,omitzero" json:"-"`
-	// Selects which projection of a `memory` or `memory_version` the server returns.
-	// `basic` returns the object with `content` set to `null`; `full` populates
-	// `content`. When omitted, the default is endpoint-specific: retrieve operations
-	// default to `full`; list, create, and update operations default to `basic`.
-	// Listing with `view=full` caps `limit` at 20.
+	// Whether a `memory` or `memory_version` in the response includes its `content`.
+	// Defaults to `full` on retrieve operations and to `basic` on list, create, and
+	// update operations.
+	//
+	// With `full`, list operations return at most 20 items per page.
 	//
 	// Any of "basic", "full".
 	View BetaManagedAgentsMemoryView `query:"view,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `agent-memory-2026-07-22` or
+	// `managed-agents-2026-04-01` in this header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }
@@ -460,12 +502,15 @@ type BetaMemoryStoreMemoryVersionListParams struct {
 	CreatedAtGte param.Opt[time.Time] `query:"created_at[gte],omitzero" format:"date-time" json:"-"`
 	// Return versions created at or before this time (inclusive).
 	CreatedAtLte param.Opt[time.Time] `query:"created_at[lte],omitzero" format:"date-time" json:"-"`
-	// The maximum number of versions to return per page. Defaults to 20.
+	// The maximum number of versions to return per page, from 1 to 100. Defaults
+	// to 20.
+	//
+	// With `view=full`, a page holds at most 20 versions.
 	Limit param.Opt[int64] `query:"limit,omitzero" json:"-"`
 	// Return only versions of the memory with this ID (`mem_...`).
 	//
-	// The filter still works after the memory is deleted. The results then include the
-	// version whose `operation` is `deleted`.
+	// The filter still works after the memory is deleted. While that memory's versions
+	// are retained, the results include the version whose `operation` is `deleted`.
 	MemoryID param.Opt[string] `query:"memory_id,omitzero" json:"-"`
 	// The `next_page` value from a previous response, to get the next page. Omit it to
 	// get the first page.
@@ -485,15 +530,16 @@ type BetaMemoryStoreMemoryVersionListParams struct {
 	//
 	// Any of "created", "modified", "deleted".
 	Operation BetaManagedAgentsMemoryVersionOperation `query:"operation,omitzero" json:"-"`
-	// Selects which projection of a `memory` or `memory_version` the server returns.
-	// `basic` returns the object with `content` set to `null`; `full` populates
-	// `content`. When omitted, the default is endpoint-specific: retrieve operations
-	// default to `full`; list, create, and update operations default to `basic`.
-	// Listing with `view=full` caps `limit` at 20.
+	// Whether a `memory` or `memory_version` in the response includes its `content`.
+	// Defaults to `full` on retrieve operations and to `basic` on list, create, and
+	// update operations.
+	//
+	// With `full`, list operations return at most 20 items per page.
 	//
 	// Any of "basic", "full".
 	View BetaManagedAgentsMemoryView `query:"view,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `agent-memory-2026-07-22` or
+	// `managed-agents-2026-04-01` in this header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }
@@ -517,7 +563,8 @@ type BetaMemoryStoreMemoryVersionRedactParams struct {
 	// credential that belongs to a specific Workspace may omit it; if sent, it must
 	// match that Workspace.
 	WorkspaceID param.Opt[string] `header:"anthropic-workspace-id,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `agent-memory-2026-07-22` or
+	// `managed-agents-2026-04-01` in this header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }

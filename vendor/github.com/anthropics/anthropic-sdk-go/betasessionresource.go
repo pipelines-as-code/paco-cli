@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apijson"
@@ -41,8 +42,15 @@ func NewBetaSessionResourceService(opts ...option.RequestOption) (r BetaSessionR
 
 // Get Session Resource
 func (r *BetaSessionResourceService) Get(ctx context.Context, resourceID string, params BetaSessionResourceGetParams, opts ...option.RequestOption) (res *BetaSessionResourceGetResponseUnion, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -57,15 +65,23 @@ func (r *BetaSessionResourceService) Get(ctx context.Context, resourceID string,
 		err = errors.New("missing required resource_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/sessions/%s/resources/%s?beta=true", params.SessionID, resourceID)
+	path := fmt.Sprintf("v1/sessions/%s/resources/%s?beta=true", url.PathEscape(params.SessionID), url.PathEscape(resourceID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.sessions.resources.retrieve", "/v1/sessions/{session_id}/resources/{resource_id}"), requestconfig.WithSpanAttribute("anthropic.session.id", params.SessionID), requestconfig.WithSpanAttribute("anthropic.session.resource.id", resourceID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &res, opts...)
 	return res, err
 }
 
 // Update Session Resource
 func (r *BetaSessionResourceService) Update(ctx context.Context, resourceID string, params BetaSessionResourceUpdateParams, opts ...option.RequestOption) (res *BetaSessionResourceUpdateResponseUnion, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -80,7 +96,8 @@ func (r *BetaSessionResourceService) Update(ctx context.Context, resourceID stri
 		err = errors.New("missing required resource_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/sessions/%s/resources/%s?beta=true", params.SessionID, resourceID)
+	path := fmt.Sprintf("v1/sessions/%s/resources/%s?beta=true", url.PathEscape(params.SessionID), url.PathEscape(resourceID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.sessions.resources.update", "/v1/sessions/{session_id}/resources/{resource_id}"), requestconfig.WithSpanAttribute("anthropic.session.id", params.SessionID), requestconfig.WithSpanAttribute("anthropic.session.resource.id", resourceID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -88,8 +105,15 @@ func (r *BetaSessionResourceService) Update(ctx context.Context, resourceID stri
 // List Session Resources
 func (r *BetaSessionResourceService) List(ctx context.Context, sessionID string, params BetaSessionResourceListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaManagedAgentsSessionResourceUnion], err error) {
 	var raw *http.Response
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -100,7 +124,8 @@ func (r *BetaSessionResourceService) List(ctx context.Context, sessionID string,
 		err = errors.New("missing required session_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/sessions/%s/resources?beta=true", sessionID)
+	path := fmt.Sprintf("v1/sessions/%s/resources?beta=true", url.PathEscape(sessionID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.sessions.resources.list", "/v1/sessions/{session_id}/resources", "limit", "page"), requestconfig.WithSpanAttribute("anthropic.session.id", sessionID))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -120,8 +145,15 @@ func (r *BetaSessionResourceService) ListAutoPaging(ctx context.Context, session
 
 // Delete Session Resource
 func (r *BetaSessionResourceService) Delete(ctx context.Context, resourceID string, params BetaSessionResourceDeleteParams, opts ...option.RequestOption) (res *BetaManagedAgentsDeleteSessionResource, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -136,15 +168,23 @@ func (r *BetaSessionResourceService) Delete(ctx context.Context, resourceID stri
 		err = errors.New("missing required resource_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/sessions/%s/resources/%s?beta=true", params.SessionID, resourceID)
+	path := fmt.Sprintf("v1/sessions/%s/resources/%s?beta=true", url.PathEscape(params.SessionID), url.PathEscape(resourceID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.sessions.resources.delete", "/v1/sessions/{session_id}/resources/{resource_id}"), requestconfig.WithSpanAttribute("anthropic.session.id", params.SessionID), requestconfig.WithSpanAttribute("anthropic.session.resource.id", resourceID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &res, opts...)
 	return res, err
 }
 
 // Add Session Resource
 func (r *BetaSessionResourceService) Add(ctx context.Context, sessionID string, params BetaSessionResourceAddParams, opts ...option.RequestOption) (res *BetaManagedAgentsFileResource, err error) {
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	if !param.IsOmitted(params.WorkspaceID) {
 		opts = append(opts, option.WithHeader("anthropic-workspace-id", fmt.Sprintf("%v", params.WorkspaceID.Value)))
@@ -155,7 +195,8 @@ func (r *BetaSessionResourceService) Add(ctx context.Context, sessionID string, 
 		err = errors.New("missing required session_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/sessions/%s/resources?beta=true", sessionID)
+	path := fmt.Sprintf("v1/sessions/%s/resources?beta=true", url.PathEscape(sessionID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.sessions.resources.add", "/v1/sessions/{session_id}/resources"), requestconfig.WithSpanAttribute("anthropic.session.id", sessionID), requestconfig.WithSpanCreatedID("anthropic.session.resource.id", &res, func(created *BetaManagedAgentsFileResource) string { return created.ID }))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
@@ -704,7 +745,8 @@ type BetaSessionResourceGetParams struct {
 	// credential that belongs to a specific Workspace may omit it; if sent, it must
 	// match that Workspace.
 	WorkspaceID param.Opt[string] `header:"anthropic-workspace-id,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `managed-agents-2026-04-01` in this
+	// header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }
@@ -721,7 +763,8 @@ type BetaSessionResourceUpdateParams struct {
 	// credential that belongs to a specific Workspace may omit it; if sent, it must
 	// match that Workspace.
 	WorkspaceID param.Opt[string] `header:"anthropic-workspace-id,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `managed-agents-2026-04-01` in this
+	// header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }
@@ -747,7 +790,8 @@ type BetaSessionResourceListParams struct {
 	// credential that belongs to a specific Workspace may omit it; if sent, it must
 	// match that Workspace.
 	WorkspaceID param.Opt[string] `header:"anthropic-workspace-id,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `managed-agents-2026-04-01` in this
+	// header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }
@@ -770,7 +814,8 @@ type BetaSessionResourceDeleteParams struct {
 	// credential that belongs to a specific Workspace may omit it; if sent, it must
 	// match that Workspace.
 	WorkspaceID param.Opt[string] `header:"anthropic-workspace-id,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `managed-agents-2026-04-01` in this
+	// header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }
@@ -785,7 +830,8 @@ type BetaSessionResourceAddParams struct {
 	// credential that belongs to a specific Workspace may omit it; if sent, it must
 	// match that Workspace.
 	WorkspaceID param.Opt[string] `header:"anthropic-workspace-id,omitzero" json:"-"`
-	// Optional header to specify the beta version(s) you want to use.
+	// This endpoint is in beta: requests must send `managed-agents-2026-04-01` in this
+	// header.
 	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }

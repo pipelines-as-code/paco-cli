@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/internal/apijson"
 	"github.com/anthropics/anthropic-sdk-go/internal/apiquery"
+	"github.com/anthropics/anthropic-sdk-go/internal/paramutil"
 	"github.com/anthropics/anthropic-sdk-go/internal/requestconfig"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/pagination"
@@ -50,25 +52,34 @@ func (r *BetaOrganizationSpendLimitService) Get(ctx context.Context, spendLimitI
 		err = errors.New("missing required spend_limit_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/spend_limits/%s?beta=true", spendLimitID)
+	path := fmt.Sprintf("v1/organizations/spend_limits/%s?beta=true", url.PathEscape(spendLimitID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.spend_limits.retrieve", "/v1/organizations/spend_limits/{spend_limit_id}"), requestconfig.WithSpanAttribute("anthropic.organization.spend_limit.id", spendLimitID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &res, opts...)
 	return res, err
 }
 
 // List the organization's spend limits.
 //
-// A Claude Console organization's limits come in an order that is stable across
-// pages. A Claude Enterprise organization's are grouped by scope type, in the
-// order `organization`, `seat_tier`, `rbac_group`, `organization_service`, `user`;
-// within a type they come in a fixed order that is not creation order.
+// Limits are grouped by scope type, in the order `organization`, `seat_tier`,
+// `rbac_group`, `organization_service`, `user`; within a type they come in a fixed
+// order that is not creation order. Supported for Claude Enterprise organizations
+// only, not for Claude Console organizations.
 func (r *BetaOrganizationSpendLimitService) List(ctx context.Context, params BetaOrganizationSpendLimitListParams, opts ...option.RequestOption) (res *pagination.PageCursor[BetaSpendLimit], err error) {
 	var raw *http.Response
-	for _, v := range params.Betas {
-		opts = append(opts, option.WithHeaderAdd("anthropic-beta", fmt.Sprintf("%v", v)))
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
 	}
 	opts = slices.Concat(r.Options, opts)
-	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
+	opts = append([]option.RequestOption{option.WithHeader("anthropic-beta", "spend-limit-reads-2026-09-26"), option.WithResponseInto(&raw)}, opts...)
 	path := "v1/organizations/spend_limits?beta=true"
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.spend_limits.list", "/v1/organizations/spend_limits", "limit", "page", "scope_type"))
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
 	if err != nil {
 		return nil, err
@@ -83,10 +94,10 @@ func (r *BetaOrganizationSpendLimitService) List(ctx context.Context, params Bet
 
 // List the organization's spend limits.
 //
-// A Claude Console organization's limits come in an order that is stable across
-// pages. A Claude Enterprise organization's are grouped by scope type, in the
-// order `organization`, `seat_tier`, `rbac_group`, `organization_service`, `user`;
-// within a type they come in a fixed order that is not creation order.
+// Limits are grouped by scope type, in the order `organization`, `seat_tier`,
+// `rbac_group`, `organization_service`, `user`; within a type they come in a fixed
+// order that is not creation order. Supported for Claude Enterprise organizations
+// only, not for Claude Console organizations.
 func (r *BetaOrganizationSpendLimitService) ListAutoPaging(ctx context.Context, params BetaOrganizationSpendLimitListParams, opts ...option.RequestOption) *pagination.PageCursorAutoPager[BetaSpendLimit] {
 	return pagination.NewPageCursorAutoPager(r.List(ctx, params, opts...))
 }
@@ -96,15 +107,17 @@ func (r *BetaOrganizationSpendLimitService) ListAutoPaging(ctx context.Context, 
 // For a Claude Enterprise organization, this deletes a per-user override, and the
 // member falls back to any inherited spend limit at that period. Its seat-tier,
 // group, and organization-level rows cannot be deleted via this endpoint. A Claude
-// Console organization deletes its organization and workspace limits. Deleting
-// them through the API is in an early access preview.
+// Console organization deletes its organization and workspace limits, but not its
+// `usage_tier` limit. Deleting organization and workspace limits through the API
+// is in an early access preview.
 func (r *BetaOrganizationSpendLimitService) Delete(ctx context.Context, spendLimitID string, opts ...option.RequestOption) (res *BetaOrganizationSpendLimitDeleteResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
 	if spendLimitID == "" {
 		err = errors.New("missing required spend_limit_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("v1/organizations/spend_limits/%s?beta=true", spendLimitID)
+	path := fmt.Sprintf("v1/organizations/spend_limits/%s?beta=true", url.PathEscape(spendLimitID))
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.spend_limits.delete", "/v1/organizations/spend_limits/{spend_limit_id}"), requestconfig.WithSpanAttribute("anthropic.organization.spend_limit.id", spendLimitID))
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &res, opts...)
 	return res, err
 }
@@ -117,10 +130,21 @@ func (r *BetaOrganizationSpendLimitService) Delete(ctx context.Context, spendLim
 // Console organization sets `organization` and `workspace` limits, which are
 // monthly and always carry an amount. Setting those limits is in an early access
 // preview. To request access, contact your Anthropic account team.
-func (r *BetaOrganizationSpendLimitService) Set(ctx context.Context, body BetaOrganizationSpendLimitSetParams, opts ...option.RequestOption) (res *BetaSpendLimit, err error) {
+func (r *BetaOrganizationSpendLimitService) Set(ctx context.Context, params BetaOrganizationSpendLimitSetParams, opts ...option.RequestOption) (res *BetaSpendLimit, err error) {
+	if len(params.Betas) > 0 {
+		headerValues := make([]string, len(params.Betas))
+		for i, v := range params.Betas {
+			headerValues[i] = fmt.Sprintf("%v", v)
+		}
+		opts = append(opts, requestconfig.RequestOptionFunc(func(cfg *requestconfig.RequestConfig) error {
+			cfg.Request.Header.Set("anthropic-beta", strings.Join(append(headerValues, cfg.Request.Header.Values("anthropic-beta")...), ","))
+			return nil
+		}))
+	}
 	opts = slices.Concat(r.Options, opts)
 	path := "v1/organizations/spend_limits?beta=true"
-	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, body, &res, opts...)
+	opts = append(opts, requestconfig.WithSpan("anthropic.organization.spend_limits.set", "/v1/organizations/spend_limits"), requestconfig.WithSpanCreatedID("anthropic.organization.spend_limit.id", &res, func(created *BetaSpendLimit) string { return created.ID }))
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
 
@@ -137,8 +161,8 @@ type BetaSpendLimit struct {
 	// ISO 4217 code of the organization's billing currency; the unit for `amount`.
 	Currency string `json:"currency" api:"required"`
 	// Read-only. `false` when extra usage is switched off for this organization
-	// (`organization` limit) or for this member (`user` limit); `amount` is kept and
-	// applies again when it's switched back on. Always `true` for other limits.
+	// (`organization` limit); `amount` is kept and applies again when it's switched
+	// back on. Always `true` for other limits.
 	IsEnabled bool `json:"is_enabled" api:"required"`
 	// Length of the window the limit resets over. `amount` caps spend within each
 	// period.
@@ -177,14 +201,15 @@ func (r *BetaSpendLimit) UnmarshalJSON(data []byte) error {
 // BetaSpendLimitScopeUnion contains all possible properties and values from
 // [BetaSpendLimitUserScope], [BetaSpendLimitSeatTierScope],
 // [BetaSpendLimitRBACGroupScope], [BetaSpendLimitOrganizationServiceScope],
-// [BetaSpendLimitOrganizationScope], [BetaSpendLimitWorkspaceScope].
+// [BetaSpendLimitOrganizationScope], [BetaSpendLimitWorkspaceScope],
+// [BetaSpendLimitUsageTierScope].
 //
 // Use the [BetaSpendLimitScopeUnion.AsAny] method to switch on the variant.
 //
 // Use the methods beginning with 'As' to cast the union to one of its variants.
 type BetaSpendLimitScopeUnion struct {
 	// Any of "user", "seat_tier", "rbac_group", "organization_service",
-	// "organization", "workspace".
+	// "organization", "workspace", "usage_tier".
 	Type string `json:"type"`
 	// This field is from variant [BetaSpendLimitUserScope].
 	UserID string `json:"user_id"`
@@ -220,6 +245,7 @@ func (BetaSpendLimitRBACGroupScope) implBetaSpendLimitScopeUnion()           {}
 func (BetaSpendLimitOrganizationServiceScope) implBetaSpendLimitScopeUnion() {}
 func (BetaSpendLimitOrganizationScope) implBetaSpendLimitScopeUnion()        {}
 func (BetaSpendLimitWorkspaceScope) implBetaSpendLimitScopeUnion()           {}
+func (BetaSpendLimitUsageTierScope) implBetaSpendLimitScopeUnion()           {}
 
 // Use the following switch statement to find the correct variant
 //
@@ -230,6 +256,7 @@ func (BetaSpendLimitWorkspaceScope) implBetaSpendLimitScopeUnion()           {}
 //	case anthropic.BetaSpendLimitOrganizationServiceScope:
 //	case anthropic.BetaSpendLimitOrganizationScope:
 //	case anthropic.BetaSpendLimitWorkspaceScope:
+//	case anthropic.BetaSpendLimitUsageTierScope:
 //	default:
 //	  fmt.Errorf("no variant present")
 //	}
@@ -247,6 +274,8 @@ func (u BetaSpendLimitScopeUnion) AsAny() anyBetaSpendLimitScope {
 		return u.AsOrganization()
 	case "workspace":
 		return u.AsWorkspace()
+	case "usage_tier":
+		return u.AsUsageTier()
 	}
 	return nil
 }
@@ -277,6 +306,11 @@ func (u BetaSpendLimitScopeUnion) AsOrganization() (v BetaSpendLimitOrganization
 }
 
 func (u BetaSpendLimitScopeUnion) AsWorkspace() (v BetaSpendLimitWorkspaceScope) {
+	apijson.UnmarshalRoot(json.RawMessage(u.JSON.raw), &v)
+	return
+}
+
+func (u BetaSpendLimitScopeUnion) AsUsageTier() (v BetaSpendLimitUsageTierScope) {
 	apijson.UnmarshalRoot(json.RawMessage(u.JSON.raw), &v)
 	return
 }
@@ -413,6 +447,27 @@ type BetaSpendLimitSeatTierScope struct {
 // Returns the unmodified JSON received from the API
 func (r BetaSpendLimitSeatTierScope) RawJSON() string { return r.JSON.raw }
 func (r *BetaSpendLimitSeatTierScope) UnmarshalJSON(data []byte) error {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+// Scope of the monthly spend cap Anthropic sets for a Claude Console organization
+// from its usage tier, or a higher cap Anthropic granted the organization.
+// Read-only; its `created_at` and `updated_at` are the organization's creation
+// time, so `amount` can change while `updated_at` stays the same.
+type BetaSpendLimitUsageTierScope struct {
+	// Scope type. Always `usage_tier` for this scope.
+	Type constant.UsageTier `json:"type" default:"usage_tier"`
+	// JSON contains metadata for fields, check presence with [respjson.Field.Valid].
+	JSON struct {
+		Type        respjson.Field
+		ExtraFields map[string]respjson.Field
+		raw         string
+	} `json:"-"`
+}
+
+// Returns the unmodified JSON received from the API
+func (r BetaSpendLimitUsageTierScope) RawJSON() string { return r.JSON.raw }
+func (r *BetaSpendLimitUsageTierScope) UnmarshalJSON(data []byte) error {
 	return apijson.UnmarshalRoot(data, r)
 }
 
@@ -676,14 +731,15 @@ func (r *BetaSpendSummaryActorUnion) UnmarshalJSON(data []byte) error {
 // BetaSpendSummaryScopeUnion contains all possible properties and values from
 // [BetaSpendLimitUserScope], [BetaSpendLimitSeatTierScope],
 // [BetaSpendLimitRBACGroupScope], [BetaSpendLimitOrganizationServiceScope],
-// [BetaSpendLimitOrganizationScope], [BetaSpendLimitWorkspaceScope].
+// [BetaSpendLimitOrganizationScope], [BetaSpendLimitWorkspaceScope],
+// [BetaSpendLimitUsageTierScope].
 //
 // Use the [BetaSpendSummaryScopeUnion.AsAny] method to switch on the variant.
 //
 // Use the methods beginning with 'As' to cast the union to one of its variants.
 type BetaSpendSummaryScopeUnion struct {
 	// Any of "user", "seat_tier", "rbac_group", "organization_service",
-	// "organization", "workspace".
+	// "organization", "workspace", "usage_tier".
 	Type string `json:"type"`
 	// This field is from variant [BetaSpendLimitUserScope].
 	UserID string `json:"user_id"`
@@ -719,6 +775,7 @@ func (BetaSpendLimitRBACGroupScope) implBetaSpendSummaryScopeUnion()           {
 func (BetaSpendLimitOrganizationServiceScope) implBetaSpendSummaryScopeUnion() {}
 func (BetaSpendLimitOrganizationScope) implBetaSpendSummaryScopeUnion()        {}
 func (BetaSpendLimitWorkspaceScope) implBetaSpendSummaryScopeUnion()           {}
+func (BetaSpendLimitUsageTierScope) implBetaSpendSummaryScopeUnion()           {}
 
 // Use the following switch statement to find the correct variant
 //
@@ -729,6 +786,7 @@ func (BetaSpendLimitWorkspaceScope) implBetaSpendSummaryScopeUnion()           {
 //	case anthropic.BetaSpendLimitOrganizationServiceScope:
 //	case anthropic.BetaSpendLimitOrganizationScope:
 //	case anthropic.BetaSpendLimitWorkspaceScope:
+//	case anthropic.BetaSpendLimitUsageTierScope:
 //	default:
 //	  fmt.Errorf("no variant present")
 //	}
@@ -746,6 +804,8 @@ func (u BetaSpendSummaryScopeUnion) AsAny() anyBetaSpendSummaryScope {
 		return u.AsOrganization()
 	case "workspace":
 		return u.AsWorkspace()
+	case "usage_tier":
+		return u.AsUsageTier()
 	}
 	return nil
 }
@@ -780,6 +840,11 @@ func (u BetaSpendSummaryScopeUnion) AsWorkspace() (v BetaSpendLimitWorkspaceScop
 	return
 }
 
+func (u BetaSpendSummaryScopeUnion) AsUsageTier() (v BetaSpendLimitUsageTierScope) {
+	apijson.UnmarshalRoot(json.RawMessage(u.JSON.raw), &v)
+	return
+}
+
 // Returns the unmodified JSON received from the API
 func (u BetaSpendSummaryScopeUnion) RawJSON() string { return u.JSON.raw }
 
@@ -790,14 +855,15 @@ func (r *BetaSpendSummaryScopeUnion) UnmarshalJSON(data []byte) error {
 // BetaSpendSummarySourceUnion contains all possible properties and values from
 // [BetaSpendLimitUserScope], [BetaSpendLimitSeatTierScope],
 // [BetaSpendLimitRBACGroupScope], [BetaSpendLimitOrganizationServiceScope],
-// [BetaSpendLimitOrganizationScope], [BetaSpendLimitWorkspaceScope].
+// [BetaSpendLimitOrganizationScope], [BetaSpendLimitWorkspaceScope],
+// [BetaSpendLimitUsageTierScope].
 //
 // Use the [BetaSpendSummarySourceUnion.AsAny] method to switch on the variant.
 //
 // Use the methods beginning with 'As' to cast the union to one of its variants.
 type BetaSpendSummarySourceUnion struct {
 	// Any of "user", "seat_tier", "rbac_group", "organization_service",
-	// "organization", "workspace".
+	// "organization", "workspace", "usage_tier".
 	Type string `json:"type"`
 	// This field is from variant [BetaSpendLimitUserScope].
 	UserID string `json:"user_id"`
@@ -833,6 +899,7 @@ func (BetaSpendLimitRBACGroupScope) implBetaSpendSummarySourceUnion()           
 func (BetaSpendLimitOrganizationServiceScope) implBetaSpendSummarySourceUnion() {}
 func (BetaSpendLimitOrganizationScope) implBetaSpendSummarySourceUnion()        {}
 func (BetaSpendLimitWorkspaceScope) implBetaSpendSummarySourceUnion()           {}
+func (BetaSpendLimitUsageTierScope) implBetaSpendSummarySourceUnion()           {}
 
 // Use the following switch statement to find the correct variant
 //
@@ -843,6 +910,7 @@ func (BetaSpendLimitWorkspaceScope) implBetaSpendSummarySourceUnion()           
 //	case anthropic.BetaSpendLimitOrganizationServiceScope:
 //	case anthropic.BetaSpendLimitOrganizationScope:
 //	case anthropic.BetaSpendLimitWorkspaceScope:
+//	case anthropic.BetaSpendLimitUsageTierScope:
 //	default:
 //	  fmt.Errorf("no variant present")
 //	}
@@ -860,6 +928,8 @@ func (u BetaSpendSummarySourceUnion) AsAny() anyBetaSpendSummarySource {
 		return u.AsOrganization()
 	case "workspace":
 		return u.AsWorkspace()
+	case "usage_tier":
+		return u.AsUsageTier()
 	}
 	return nil
 }
@@ -894,6 +964,11 @@ func (u BetaSpendSummarySourceUnion) AsWorkspace() (v BetaSpendLimitWorkspaceSco
 	return
 }
 
+func (u BetaSpendSummarySourceUnion) AsUsageTier() (v BetaSpendLimitUsageTierScope) {
+	apijson.UnmarshalRoot(json.RawMessage(u.JSON.raw), &v)
+	return
+}
+
 // Returns the unmodified JSON received from the API
 func (u BetaSpendSummarySourceUnion) RawJSON() string { return u.JSON.raw }
 
@@ -924,10 +999,7 @@ type BetaOrganizationSpendLimitListParams struct {
 	Page param.Opt[string] `query:"page,omitzero" json:"-"`
 	// Maximum number of limits per page. Defaults to `20`.
 	Limit param.Opt[int64] `query:"limit,omitzero" json:"-"`
-	// Return only limits with these scope types. A Claude Console organization has
-	// `organization` and `workspace` limits; a Claude Enterprise organization has
-	// `organization`, `seat_tier`, `rbac_group`, `organization_service` and `user`
-	// limits. Omit for all.
+	// Return only limits with these scope types. Omit for all.
 	//
 	// Any of "organization", "organization_service", "rbac_group", "seat_tier",
 	// "user", "workspace".
@@ -961,6 +1033,8 @@ type BetaOrganizationSpendLimitSetParams struct {
 	Scope BetaOrganizationSpendLimitSetParamsScopeUnion `json:"scope,omitzero" api:"required"`
 	// Any of "daily", "monthly", "weekly".
 	Period BetaSpendLimitPeriod `json:"period,omitzero"`
+	// Optional header to specify the beta version(s) you want to use.
+	Betas []AnthropicBeta `header:"anthropic-beta,omitzero" json:"-"`
 	paramObj
 }
 
@@ -1019,11 +1093,11 @@ func (u BetaOrganizationSpendLimitSetParamsScopeUnion) GetWorkspaceID() *string 
 // Returns a pointer to the underlying variant's property, if present.
 func (u BetaOrganizationSpendLimitSetParamsScopeUnion) GetType() *string {
 	if vt := u.OfUser; vt != nil {
-		return (*string)(&vt.Type)
+		return paramutil.AddrOrDefault(vt.Type)
 	} else if vt := u.OfOrganization; vt != nil {
-		return (*string)(&vt.Type)
+		return paramutil.AddrOrDefault(vt.Type)
 	} else if vt := u.OfWorkspace; vt != nil {
-		return (*string)(&vt.Type)
+		return paramutil.AddrOrDefault(vt.Type)
 	}
 	return nil
 }

@@ -215,14 +215,19 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 		if snapshot != nil {
 			coverage = &coverageTools{Toolset: snapshot}
 			tools = coverage
-			if line := excludedLimitation(snapshot, nil); line != "" {
-				p.limitations = append(p.limitations, line)
-			}
 			p.log.Line("Repository exploration available: %d files at %s", len(snapshot.Files), snapshot.Commit)
+			parsed, err := diff.Parse(security.ScrubDiff(string(diffData), backend.Secrets...))
+			if err == nil {
+				line, reported := excludedLimitation(parsed, snapshot, nil)
+				if line != "" {
+					p.limitations = append(p.limitations, line)
+				}
+				coverage.reported = reported
+			}
 			if !opts.NoInventory {
 				// Single-pass loads only the head snapshot, so the inventory
 				// cannot map deleted lines to before-side declarations.
-				if parsed, err := diff.Parse(security.Scrub(string(diffData), backend.Secrets...)); err == nil {
+				if err == nil {
 					inventory = renderInventory(parsed, snapshot, nil)
 				} else {
 					p.log.Line("Change inventory unavailable: %s", err.Error())

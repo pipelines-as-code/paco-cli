@@ -46,7 +46,8 @@ workspace and before logging. Patterns:
 - JWTs: `eyJ...` base64 header pairs
 - AWS access keys: `AKIA` prefixed
 - GCP service account emails: `*@*.iam.gserviceaccount.com`
-- PEM private key headers
+- PEM private keys: the BEGIN and END markers and each base64 body
+  line, keeping line numbers intact
 - Anthropic API keys: `sk-ant-` prefixed
 
 ## Secret Scanning

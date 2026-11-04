@@ -131,7 +131,7 @@ func Run(ctx context.Context, opts Options) error {
 		))
 	}
 
-	redactedDiff := security.Scrub(rawDiff, gh.Token())
+	redactedDiff := security.ScrubDiff(rawDiff, gh.Token())
 	if err := ws.Write(artifact.FileDiff, []byte(redactedDiff)); err != nil {
 		return err
 	}
@@ -235,10 +235,11 @@ func Run(ctx context.Context, opts Options) error {
 			fmt.Printf("Warning: %s context unavailable: %s\n", item.name, item.state.Reason)
 			continue
 		}
+		// Excluded files alone leave the overall context complete: review
+		// reports them only when the change touches them.
 		item.state.Status, item.state.Excluded = "available", item.snapshot.Excluded
 		if item.snapshot.Excluded > 0 {
 			item.state.Status = "partial"
-			manifest.ContextStatus = "partial"
 		}
 		encoded, err := json.Marshal(item.snapshot)
 		if err != nil {

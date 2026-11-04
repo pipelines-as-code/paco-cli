@@ -75,6 +75,7 @@ func TestSnapshotFiltersAndRedacts(t *testing.T) {
 	// Only oversized text and credential-like files count as missing
 	// coverage; dependencies, links and binary files hold no reviewable source.
 	assert.Equal(t, s.Excluded, 3)
+	assert.DeepEqual(t, s.ExcludedPaths, []string{".envrc", "big.txt", "sub/credentials.json"})
 	assert.Equal(t, s.Files["a.go"], "package a\n// [REDACTED]\n")
 	assert.Equal(t, s.Files["keys.txt"], "[REDACTED]")
 	encoded, err := json.Marshal(s)
@@ -137,7 +138,7 @@ func TestSnapshotExcludesPrivateKeyContent(t *testing.T) {
 		assert.Equal(t, len(snapshot.Files), 0)
 		assert.Equal(t, snapshot.Excluded, len(files))
 		_, err := snapshot.Call(context.Background(), "read_file", json.RawMessage(`{"path":"id_rsa","start_line":1,"end_line":3}`))
-		assert.ErrorContains(t, err, "file is not available")
+		assert.ErrorContains(t, err, "excluded during collection")
 	}
 	for name, content := range files {
 		for _, text := range []string{content, security.Scrub(content)} {
@@ -146,6 +147,50 @@ func TestSnapshotExcludesPrivateKeyContent(t *testing.T) {
 			_, err = Decode(data, "sha")
 			assert.ErrorContains(t, err, "invalid file")
 		}
+	}
+}
+
+func TestSnapshotKeepsRedactedPrivateKeys(t *testing.T) {
+	body := "MIIC" + strings.Repeat("Ab1/", 15)
+	begin, end := "-----BEGIN RSA PRIVATE KEY-----", "-----END RSA PRIVATE KEY-----"
+	goTest := "package a\n\nconst fakePrivateKey = `" + begin + "\n" + body + "\n" + body + "\n" + end + "`\n\nfunc TestA(t *testing.T) {}\n"
+	escaped, err := json.Marshal(map[string]string{"private_key": begin + "\n" + body + "\n" + end + "\n"})
+	assert.NilError(t, err)
+	s, err := FromArchive(archive(
+		t,
+		archiveFile{name: "root/a_test.go", content: goTest},
+		archiveFile{name: "root/sa.json", content: string(escaped)},
+	), "sha")
+	assert.NilError(t, err)
+	kept := s.Files["a_test.go"]
+	assert.Equal(t, kept, "package a\n\nconst fakePrivateKey = `[REDACTED PRIVATE KEY BEGIN]\n[REDACTED]\n[REDACTED]\n[REDACTED PRIVATE KEY END]`\n\nfunc TestA(t *testing.T) {}\n")
+	assert.Equal(t, strings.Count(kept, "\n"), strings.Count(goTest, "\n"))
+	assert.Equal(t, s.Excluded, 1)
+	assert.DeepEqual(t, s.ExcludedPaths, []string{"sa.json"})
+	encoded, err := json.Marshal(s)
+	assert.NilError(t, err)
+	decoded, err := Decode(encoded, "sha")
+	assert.NilError(t, err)
+	assert.DeepEqual(t, decoded, s)
+
+	for _, text := range []string{string(escaped), security.Scrub(string(escaped)), goTest} {
+		data, err := json.Marshal(&Snapshot{Commit: "sha", Files: map[string]string{"sa.json": text}})
+		assert.NilError(t, err)
+		_, err = Decode(data, "sha")
+		assert.ErrorContains(t, err, "invalid file")
+	}
+}
+
+func TestDecodeRejectsInvalidExcludedPaths(t *testing.T) {
+	for _, data := range []string{
+		`{"commit":"sha","excluded":1,"excluded_paths":["a","b"],"files":{}}`,
+		`{"commit":"sha","excluded":2,"excluded_paths":["b","a"],"files":{}}`,
+		`{"commit":"sha","excluded":2,"excluded_paths":["a","a"],"files":{}}`,
+		`{"commit":"sha","excluded":1,"excluded_paths":["../a"],"files":{}}`,
+		`{"commit":"sha","excluded":1,"excluded_paths":["a"],"files":{"a":"x"}}`,
+	} {
+		_, err := Decode([]byte(data), "sha")
+		assert.ErrorContains(t, err, "invalid source snapshot metadata", data)
 	}
 }
 

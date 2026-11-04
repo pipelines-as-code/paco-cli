@@ -21,9 +21,18 @@ const maxResultBytes = 15000
 type UnavailableError struct {
 	message    string
 	Limitation string
+	// Path is the excluded file the request named, if any.
+	Path string
 }
 
 func (e *UnavailableError) Error() string { return e.message }
+
+func shortCommit(commit string) string {
+	if len(commit) > 7 {
+		return commit[:7]
+	}
+	return commit
+}
 
 func (s *Snapshot) Definitions() []model.Tool {
 	return []model.Tool{
@@ -95,6 +104,13 @@ func (s *Snapshot) call(ctx context.Context, name string, input json.RawMessage,
 			return "", errors.New("invalid path or line range; use 1-based ranges of at most 200 lines")
 		}
 		content, ok := s.Files[args.Path]
+		if !ok && s.IsExcluded(args.Path) {
+			return "", &UnavailableError{
+				message:    "file was excluded during collection because it was too large, looked like credentials, or could not be read; it cannot be reviewed",
+				Limitation: fmt.Sprintf("Could not load %q at %s because it was too large, looked like credentials, or could not be read.", args.Path, shortCommit(s.Commit)),
+				Path:       args.Path,
+			}
+		}
 		if !ok {
 			return "", errors.New("file is not available in the snapshot")
 		}

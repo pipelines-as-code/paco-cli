@@ -5,6 +5,7 @@ package reviewbench
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
@@ -32,7 +33,7 @@ func Prepare(ws *artifact.Workspace, in Input) (skip string, parsed *diff.Parsed
 		return "No reviewable changes found in this diff.", nil, nil
 	}
 	// Same pattern redaction `paco diff` applies; snapshots get it too.
-	redacted := security.Scrub(in.Diff)
+	redacted := security.ScrubDiff(in.Diff)
 	parsed, err = diff.Parse(redacted)
 	if err != nil {
 		return "Paco: could not use the pull request diff: " + err.Error() + ".", nil, nil
@@ -97,7 +98,6 @@ func Prepare(ws *artifact.Workspace, in Input) (skip string, parsed *diff.Parsed
 		item.state.Status, item.state.Excluded = "available", item.snapshot.Excluded
 		if item.snapshot.Excluded > 0 {
 			item.state.Status = "partial"
-			manifest.ContextStatus = "partial"
 		}
 		encoded, err := json.Marshal(item.snapshot)
 		if err != nil {
@@ -118,12 +118,20 @@ func Prepare(ws *artifact.Workspace, in Input) (skip string, parsed *diff.Parsed
 }
 
 func changedOnly(s *source.Snapshot, parsed *diff.ParsedDiff) *source.Snapshot {
-	kept := &source.Snapshot{Commit: s.Commit, Files: map[string]string{}, Excluded: s.Excluded}
+	kept := &source.Snapshot{Commit: s.Commit, Files: map[string]string{}, Excluded: s.Excluded, ExcludedPaths: slices.Clone(s.ExcludedPaths)}
 	for _, file := range parsed.Files {
 		if content, ok := s.Files[file.OldPath]; ok {
 			kept.Files[file.OldPath] = content
 		}
 	}
+	// Dropped files were already safe to name, so reads of them are reported
+	// as coverage gaps like any other exclusion.
+	for name := range s.Files {
+		if _, ok := kept.Files[name]; !ok {
+			kept.ExcludedPaths = append(kept.ExcludedPaths, name)
+		}
+	}
+	slices.Sort(kept.ExcludedPaths)
 	kept.Excluded += len(s.Files) - len(kept.Files)
 	return kept
 }

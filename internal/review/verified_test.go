@@ -131,11 +131,11 @@ func TestVerifiedReviewHTTP(t *testing.T) {
 				Evidence: []Evidence{{Revision: "head", Path: "a.go", Start: 1, End: 1, Quote: "return a / b"}},
 			}},
 		})},
-		{name: "unavailable evidence is partial", partial: true, response: jsonText(t, verdict{
+		{name: "unavailable evidence is not a coverage gap", response: jsonText(t, verdict{
 			Summary:   discovered.Summary,
 			Decisions: []decision{{ID: c.ID, Outcome: "insufficient_evidence", Reason: "Caller is unavailable.", Evidence: []Evidence{}}},
 		})},
-		{name: "misquoted acceptance is unverified, not fatal", partial: true, response: jsonText(t, verdict{
+		{name: "misquoted acceptance is unverified, not fatal", response: jsonText(t, verdict{
 			Summary: discovered.Summary,
 			Decisions: []decision{{
 				ID: c.ID, Outcome: "accept", Reason: "Guard is removed.", Severity: "high",
@@ -421,9 +421,9 @@ func TestCollectionLimitationIsExplained(t *testing.T) {
 		want   []string
 	}{
 		{
-			name:   "exclusions explain partial context",
-			source: `{"commit":"head-sha","excluded":2,"files":{"a.go":"return a / b"}}`,
-			want:   []string{"Could not load 2 files at PR head head-sh because they were too large, looked like credentials, or could not be read."},
+			name:   "excluded changed file explains partial context",
+			source: `{"commit":"head-sha","excluded":2,"excluded_paths":["a.go"],"files":{}}`,
+			want:   []string{`Could not load "a.go" at PR head head-sh because it was too large, looked like credentials, or could not be read.`},
 		},
 		{name: "unexplained partial context", want: []string{"Paco could not collect all of the repository context."}},
 		{
@@ -464,12 +464,57 @@ func TestCollectionLimitationIsExplained(t *testing.T) {
 }
 
 func TestExcludedLimitation(t *testing.T) {
-	head := &source.Snapshot{Commit: "b4be389eaeb16c141527e27a064763d4a6070f0b", Excluded: 3}
-	same := &source.Snapshot{Commit: "0db98de9ecffac723efabfc8ee2dfa5fd089e27f", Excluded: 3}
-	other := &source.Snapshot{Commit: "0db98de9ecffac723efabfc8ee2dfa5fd089e27f", Excluded: 1}
-	assert.Equal(t, excludedLimitation(&source.Snapshot{Commit: "x"}, nil), "")
-	assert.Equal(t, excludedLimitation(head, same), "Could not load 3 files at PR head b4be389 and base 0db98de because they were too large, looked like credentials, or could not be read.")
-	assert.Equal(t, excludedLimitation(head, other), "Could not load 3 files at PR head b4be389 and 1 file at base 0db98de because they were too large, looked like credentials, or could not be read.")
+	d := &source.Diff{Files: []source.FileDiff{
+		{OldPath: "a.go", NewPath: "a.go", Status: "modified"},
+		{OldPath: "old.go", NewPath: "new.go", Status: "renamed"},
+		{NewPath: "added.go", Status: "added"},
+	}}
+	head := &source.Snapshot{Commit: "b4be389eaeb16c141527e27a064763d4a6070f0b", Excluded: 3, ExcludedPaths: []string{"a.go", "added.go", "go.sum"}}
+	same := &source.Snapshot{Commit: "0db98de9ecffac723efabfc8ee2dfa5fd089e27f", Excluded: 2, ExcludedPaths: []string{"a.go", "added.go"}}
+	other := &source.Snapshot{Commit: "0db98de9ecffac723efabfc8ee2dfa5fd089e27f", Excluded: 2, ExcludedPaths: []string{"go.sum", "old.go"}}
+
+	line, reported := excludedLimitation(d, &source.Snapshot{Commit: "x", Excluded: 1, ExcludedPaths: []string{"go.sum"}}, nil)
+	assert.Equal(t, line, "", "exclusions outside the change are not reported")
+	assert.Assert(t, reported == nil)
+
+	line, reported = excludedLimitation(d, head, same)
+	assert.Equal(t, line, `Could not load "a.go", "added.go" at PR head b4be389 and "a.go" at base 0db98de because they were too large, looked like credentials, or could not be read.`)
+	assert.DeepEqual(t, reported, []string{"a.go", "added.go"})
+
+	line, _ = excludedLimitation(&source.Diff{Files: d.Files[:1]}, head, same)
+	assert.Equal(t, line, `Could not load "a.go" at PR head b4be389 and base 0db98de because it was too large, looked like credentials, or could not be read.`)
+
+	line, _ = excludedLimitation(d, nil, other)
+	assert.Equal(t, line, `Could not load "old.go" at base 0db98de because it was too large, looked like credentials, or could not be read.`)
+
+	many := &source.Diff{}
+	excluded := &source.Snapshot{Commit: "c", Excluded: 5}
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		many.Files = append(many.Files, source.FileDiff{NewPath: name, Status: "added"})
+		excluded.ExcludedPaths = append(excluded.ExcludedPaths, name)
+	}
+	line, _ = excludedLimitation(many, excluded, nil)
+	assert.Equal(t, line, `Could not load "a", "b", "c" and 2 more files at PR head c because they were too large, looked like credentials, or could not be read.`)
+
+	// A changed file missing from a snapshot that also counted unnamed
+	// exclusions may be one of them; vendored and kept files are not.
+	counted := &source.Snapshot{Commit: "c", Excluded: 2, ExcludedPaths: []string{"go.sum"}, Files: map[string]string{"kept.go": ""}}
+	kept := &source.Diff{Files: []source.FileDiff{{NewPath: "kept.go", Status: "added"}, {NewPath: "vendor/x.go", Status: "added"}, {NewPath: "img.png", Status: "added", Binary: true}}}
+	line, _ = excludedLimitation(kept, counted, nil)
+	assert.Equal(t, line, "")
+	line, reported = excludedLimitation(&source.Diff{Files: []source.FileDiff{{NewPath: ".env.local", Status: "added"}}}, counted, nil)
+	assert.Equal(t, line, "Some changed files could not be loaded because they were too large, looked like credentials, or could not be read.")
+	assert.Assert(t, reported == nil)
+}
+
+func TestReadingExcludedFileIsReportedOnce(t *testing.T) {
+	head := &source.Snapshot{Commit: "head-sha", Files: map[string]string{}, Excluded: 2, ExcludedPaths: []string{"big.go", "changed.go"}}
+	tools := coverageTools{Toolset: &source.Toolset{Head: head}, reported: []string{"changed.go"}}
+	for _, path := range []string{"big.go", "changed.go", "big.go"} {
+		_, err := tools.Call(context.Background(), "read_file", json.RawMessage(`{"path":"`+path+`","start_line":1,"end_line":1}`))
+		assert.ErrorContains(t, err, "excluded during collection")
+	}
+	assert.DeepEqual(t, tools.gaps, []string{`Could not load "big.go" at head-sh because it was too large, looked like credentials, or could not be read.`})
 }
 
 func TestNumberedSourcePreservesExactWhitespace(t *testing.T) {

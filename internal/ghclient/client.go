@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	requestTimeout = 2 * time.Minute
+	requestTimeout = time.Duration(120)
 	perPage        = 100
 )
 

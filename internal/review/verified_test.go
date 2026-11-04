@@ -503,7 +503,7 @@ func TestExcludedLimitation(t *testing.T) {
 	line, _ = excludedLimitation(kept, counted, nil)
 	assert.Equal(t, line, "")
 	line, reported = excludedLimitation(&source.Diff{Files: []source.FileDiff{{NewPath: ".env.local", Status: "added"}}}, counted, nil)
-	assert.Equal(t, line, "Some changed files could not be loaded because they were too large, looked like credentials, or could not be read.")
+	assert.Equal(t, line, "Some source files could not be loaded because they were too large, looked like credentials, or could not be read.")
 	assert.Assert(t, reported == nil)
 }
 
@@ -515,6 +515,51 @@ func TestReadingExcludedFileIsReportedOnce(t *testing.T) {
 		assert.ErrorContains(t, err, "excluded during collection")
 	}
 	assert.DeepEqual(t, tools.gaps, []string{`Could not load "big.go" at head-sh because it was too large, looked like credentials, or could not be read.`})
+}
+
+func TestReadingUnnamedExclusions(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		path     string
+		excluded int
+		known    []string
+		gap      bool
+	}{
+		{name: "legacy snapshot", path: "old.go", excluded: 1, gap: true},
+		{name: "unrecorded path", path: "overflow.go", excluded: 2, known: []string{"big.go"}, gap: true},
+		{name: "sensitive path", path: "ghp_" + strings.Repeat("a", 24), excluded: 1, gap: true},
+		{name: "ordinary missing file", path: "missing.go"},
+		{name: "all exclusions named", path: "missing.go", excluded: 1, known: []string{"big.go"}},
+		{name: "dependency", path: "vendor/dep.go", excluded: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			head := &source.Snapshot{Commit: "head-sha", Excluded: tt.excluded, ExcludedPaths: tt.known}
+			tools := coverageTools{Toolset: &source.Toolset{Head: head}}
+			input, err := json.Marshal(map[string]any{"path": tt.path, "start_line": 1, "end_line": 1})
+			assert.NilError(t, err)
+			for range 2 {
+				_, err := tools.Call(context.Background(), "read_file", input)
+				assert.Assert(t, err != nil)
+				assert.Assert(t, !strings.Contains(err.Error(), tt.path))
+			}
+			if tt.gap {
+				assert.DeepEqual(t, tools.gaps, []string{source.UnnamedExclusionLimitation})
+			} else {
+				assert.Equal(t, len(tools.gaps), 0)
+			}
+		})
+	}
+}
+
+func TestReadingReportedUnnamedExclusion(t *testing.T) {
+	head := &source.Snapshot{Commit: "head", Excluded: 1}
+	d := &source.Diff{Files: []source.FileDiff{{NewPath: "missing.go", Status: "added"}}}
+	line, reported := excludedLimitation(d, head, nil)
+	assert.Equal(t, line, source.UnnamedExclusionLimitation)
+	tools := coverageTools{Toolset: head, reported: reported, reportedUnnamed: strings.Contains(line, source.UnnamedExclusionLimitation)}
+	_, err := tools.Call(context.Background(), "read_file", json.RawMessage(`{"path":"missing.go","start_line":1,"end_line":1}`))
+	assert.ErrorContains(t, err, "may have been excluded")
+	assert.Equal(t, len(tools.gaps), 0)
 }
 
 func TestNumberedSourcePreservesExactWhitespace(t *testing.T) {

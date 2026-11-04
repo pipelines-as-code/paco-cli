@@ -223,6 +223,7 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 					p.limitations = append(p.limitations, line)
 				}
 				coverage.reported = reported
+				coverage.reportedUnnamed = strings.Contains(line, source.UnnamedExclusionLimitation)
 			}
 			if !opts.NoInventory {
 				// Single-pass loads only the head snapshot, so the inventory

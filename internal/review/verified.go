@@ -87,7 +87,7 @@ func loadVerifiedInput(ws *artifact.Workspace, secrets []string, noExploration b
 	if manifest.Before.Status != "unavailable" && manifest.MergeBaseSHA == "" {
 		return nil, errors.New("before snapshot has no comparison revision")
 	}
-	parsed, err := diff.Parse(security.Scrub(string(diffData), secrets...))
+	parsed, err := diff.Parse(security.ScrubDiff(string(diffData), secrets...))
 	if err != nil {
 		return nil, fmt.Errorf("parsing verified diff: %w", err)
 	}
@@ -264,9 +264,16 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if input.tools.Before == nil {
 		status.Limitations = append(status.Limitations, "Full before source unavailable; pre-change evidence is limited to the diff.")
 	}
-	if line := excludedLimitation(input.tools.Head, input.tools.Before); line != "" {
+	line, reported := excludedLimitation(input.tools.Diff, input.tools.Head, input.tools.Before)
+	if line != "" {
 		status.Limitations = append(status.Limitations, line)
-		explained = true
+	}
+	// Exclusions are the only cause of partial context that is not already
+	// explained, and they are reported above only when the change needs them.
+	for _, snapshot := range []*source.Snapshot{input.tools.Head, input.tools.Before} {
+		if snapshot != nil && snapshot.Excluded > 0 {
+			explained = true
+		}
 	}
 	if input.manifest.ContextStatus == "partial" && !explained {
 		status.Limitations = append(status.Limitations, "Paco could not collect all of the repository context.")
@@ -321,7 +328,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if modelID == "" {
 		modelID = backend.DefaultModel
 	}
-	tools := &coverageTools{Toolset: input.tools}
+	tools := &coverageTools{Toolset: input.tools, reported: reported}
 	request := func(instructions, prompt string, schema map[string]any, limits *model.Limits) (string, error) {
 		shape, err := json.Marshal(schema)
 		if err != nil {
@@ -452,7 +459,6 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 				accepted = append(accepted, c)
 			case "insufficient_evidence":
 				status.Rejected++
-				status.Limitations = append(status.Limitations, "A candidate could not be verified with the available context.")
 			case "reject":
 				if decision.DuplicateOf != "" {
 					status.Duplicates++
@@ -558,6 +564,8 @@ func unfenced(field string) string {
 type coverageTools struct {
 	model.Toolset
 	gaps []string
+	// reported lists excluded paths already named in a limitation.
+	reported []string
 }
 
 // Call records Paco-owned limitation text for data no request can return;
@@ -566,38 +574,74 @@ type coverageTools struct {
 func (t *coverageTools) Call(ctx context.Context, name string, input json.RawMessage) (string, error) {
 	output, err := t.Toolset.Call(ctx, name, input)
 	var unavailable *source.UnavailableError
-	if errors.As(err, &unavailable) && !slices.Contains(t.gaps, unavailable.Limitation) {
+	if errors.As(err, &unavailable) && !slices.Contains(t.gaps, unavailable.Limitation) && !slices.Contains(t.reported, unavailable.Path) {
 		t.gaps = append(t.gaps, unavailable.Limitation)
 	}
 	return output, err
 }
 
-// excludedLimitation describes the text files a snapshot left out, naming
-// both revisions in one line when they left out the same number.
-func excludedLimitation(head, before *source.Snapshot) string {
-	files := func(n int) string {
-		if n == 1 {
-			return "1 file"
+// excludedLimitation names the changed files a snapshot left out by name,
+// and returns those paths. A changed file that may be among the exclusions
+// recorded only as a count gets a line without names. Exclusions elsewhere in
+// the repository do not limit the review of this change and are reported only
+// if a read hits them.
+func excludedLimitation(d *source.Diff, head, before *source.Snapshot) (string, []string) {
+	var headPaths, beforePaths []string
+	unnamed := false
+	for _, file := range d.Files {
+		if !file.Binary && (head != nil && file.Status != "deleted" && head.MayBeExcluded(file.NewPath) ||
+			before != nil && file.Status != "added" && before.MayBeExcluded(file.OldPath)) {
+			unnamed = true
 		}
-		return fmt.Sprintf("%d files", n)
+		if head != nil && file.Status != "deleted" && head.IsExcluded(file.NewPath) && !slices.Contains(headPaths, file.NewPath) {
+			headPaths = append(headPaths, file.NewPath)
+		}
+		if before != nil && file.Status != "added" && before.IsExcluded(file.OldPath) && !slices.Contains(beforePaths, file.OldPath) {
+			beforePaths = append(beforePaths, file.OldPath)
+		}
+	}
+	names := func(paths []string) string {
+		quoted := make([]string, 0, 3)
+		for _, path := range paths[:min(len(paths), 3)] {
+			quoted = append(quoted, fmt.Sprintf("%q", path))
+		}
+		text := strings.Join(quoted, ", ")
+		if extra := len(paths) - len(quoted); extra == 1 {
+			text += " and 1 more file"
+		} else if extra > 1 {
+			text += fmt.Sprintf(" and %d more files", extra)
+		}
+		return text
 	}
 	var parts []string
-	if head != nil && before != nil && head.Excluded > 0 && head.Excluded == before.Excluded {
-		parts = append(parts, fmt.Sprintf("%s at PR head %s and base %s", files(head.Excluded), shortSHA(head.Commit), shortSHA(before.Commit)))
+	if len(headPaths) > 0 && slices.Equal(headPaths, beforePaths) {
+		parts = append(parts, fmt.Sprintf("%s at PR head %s and base %s", names(headPaths), shortSHA(head.Commit), shortSHA(before.Commit)))
 	} else {
-		for _, item := range []struct {
-			label    string
-			snapshot *source.Snapshot
-		}{{"PR head", head}, {"base", before}} {
-			if item.snapshot != nil && item.snapshot.Excluded > 0 {
-				parts = append(parts, fmt.Sprintf("%s at %s %s", files(item.snapshot.Excluded), item.label, shortSHA(item.snapshot.Commit)))
-			}
+		if len(headPaths) > 0 {
+			parts = append(parts, fmt.Sprintf("%s at PR head %s", names(headPaths), shortSHA(head.Commit)))
+		}
+		if len(beforePaths) > 0 {
+			parts = append(parts, fmt.Sprintf("%s at base %s", names(beforePaths), shortSHA(before.Commit)))
 		}
 	}
+	const unnamedLine = "Some changed files could not be loaded because they were too large, looked like credentials, or could not be read."
 	if len(parts) == 0 {
-		return ""
+		if unnamed {
+			return unnamedLine, nil
+		}
+		return "", nil
 	}
-	return "Could not load " + strings.Join(parts, " and ") + " because they were too large, looked like credentials, or could not be read."
+	reason := "because they were too large, looked like credentials, or could not be read."
+	if len(headPaths)+len(beforePaths) == 1 || slices.Equal(headPaths, beforePaths) && len(headPaths) == 1 {
+		reason = "because it was too large, looked like credentials, or could not be read."
+	}
+	reported := slices.Concat(headPaths, beforePaths)
+	slices.Sort(reported)
+	line := "Could not load " + strings.Join(parts, " and ") + " " + reason
+	if unnamed {
+		line += " " + unnamedLine
+	}
+	return line, slices.Compact(reported)
 }
 
 func shortSHA(commit string) string {

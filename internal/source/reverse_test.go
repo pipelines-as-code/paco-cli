@@ -1,11 +1,15 @@
 package source_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pipelines-as-code/paco-cli/internal/diff"
+	"github.com/pipelines-as-code/paco-cli/internal/security"
 	"github.com/pipelines-as-code/paco-cli/internal/source"
 	"gotest.tools/v3/assert"
 )
@@ -131,6 +135,66 @@ func TestReverseExcludesMismatchedFiles(t *testing.T) {
 	// a.go no longer matches the diff and new/name.txt is missing from head.
 	assert.DeepEqual(t, before.Files, map[string]string{"gone.txt": "x\ny"})
 	assert.Equal(t, before.Excluded, 2)
+	assert.DeepEqual(t, before.ExcludedPaths, []string{"a.go", "old/name.txt"})
+}
+
+func TestReverseReconcilesExcludedPaths(t *testing.T) {
+	parsed, err := diff.Parse(`diff --git a/a.txt b/b.txt
+similarity index 100%
+rename from a.txt
+rename to b.txt
+diff --git a/b.txt b/a.txt
+similarity index 100%
+rename from b.txt
+rename to a.txt
+diff --git a/added.go b/added.go
+new file mode 100644
+--- /dev/null
++++ b/added.go
+@@ -0,0 +1 @@
++package a
+`)
+	assert.NilError(t, err)
+	// a.txt is too large at head; the old a.txt is rebuilt from head's b.txt.
+	head := &source.Snapshot{Commit: "head", Excluded: 3, ExcludedPaths: []string{"a.txt", "added.go", "go.sum"}, Files: map[string]string{"b.txt": "small\n"}}
+	before := source.Reverse(head, parsed, "base")
+	assert.DeepEqual(t, before.Files, map[string]string{"a.txt": "small\n"})
+	assert.DeepEqual(t, before.ExcludedPaths, []string{"b.txt", "go.sum"})
+	encoded, err := json.Marshal(before)
+	assert.NilError(t, err)
+	_, err = source.Decode(encoded, "base")
+	assert.NilError(t, err)
+}
+
+// A key edit redacts the same way in the diff and in both snapshots, even
+// when the hunk shows no key markers and body lines start with "+".
+func TestRedactedKeyDiffMatchesSnapshots(t *testing.T) {
+	body := func(i int) string { return fmt.Sprintf("MIIC%s%04d", strings.Repeat("Ab1/", 14), i) }
+	plusLine := "+" + body(99)
+	lines := []string{"package k", "", "const key = `-----BEGIN RSA PRIVATE KEY-----", body(1), body(2), plusLine, body(4), body(5), body(6), body(7), body(8), "-----END RSA PRIVATE KEY-----`", ""}
+	beforeText := strings.Join(lines, "\n")
+	lines[7] = "+" + body(50)
+	headText := strings.Join(lines, "\n")
+	rawDiff := "diff --git a/k.go b/k.go\n--- a/k.go\n+++ b/k.go\n@@ -5,7 +5,7 @@\n " + body(2) + "\n " + plusLine + "\n " + body(4) + "\n-" + body(5) + "\n+" + "+" + body(50) + "\n " + body(6) + "\n " + body(7) + "\n " + body(8) + "\n"
+
+	redactedDiff := security.ScrubDiff(rawDiff)
+	assert.Assert(t, !strings.Contains(redactedDiff, "Ab1/"), redactedDiff)
+	parsed, err := diff.Parse(redactedDiff)
+	assert.NilError(t, err)
+	head := &source.Snapshot{Commit: "head", Files: map[string]string{"k.go": security.Scrub(headText)}}
+	before := source.Reverse(head, parsed, "base")
+	assert.Equal(t, before.Files["k.go"], security.Scrub(beforeText))
+	assert.Equal(t, before.Excluded, 0)
+	for _, line := range parsed.Files[0].Hunks[0].Lines {
+		for _, side := range []struct {
+			snapshot *source.Snapshot
+			number   int
+		}{{head, line.NewLine}, {before, line.OldLine}} {
+			if side.number > 0 {
+				assert.Equal(t, strings.Split(side.snapshot.Files["k.go"], "\n")[side.number-1], line.Content)
+			}
+		}
+	}
 }
 
 func TestReverseSkipsDependencyFiles(t *testing.T) {

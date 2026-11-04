@@ -33,6 +33,36 @@ type Snapshot struct {
 	Commit   string            `json:"commit"`
 	Files    map[string]string `json:"files"`
 	Excluded int               `json:"excluded"`
+	// ExcludedPaths names the excluded files whose paths are safe to show;
+	// the rest are only counted in Excluded.
+	ExcludedPaths []string `json:"excluded_paths,omitempty"`
+}
+
+// exclude counts name as excluded and records it when the name itself is
+// safe to show.
+func (s *Snapshot) exclude(name string) {
+	s.Excluded++
+	if safePath(name) && security.ScanSecrets(name) == "" && !slices.Contains(s.ExcludedPaths, name) && len(s.ExcludedPaths) < maxFiles {
+		s.ExcludedPaths = append(s.ExcludedPaths, name)
+	}
+}
+
+// IsExcluded reports whether name was left out of the snapshot by name.
+func (s *Snapshot) IsExcluded(name string) bool {
+	_, found := slices.BinarySearch(s.ExcludedPaths, name)
+	return found
+}
+
+// MayBeExcluded reports whether name is missing from the snapshot and could
+// be one of the excluded files that were only counted.
+func (s *Snapshot) MayBeExcluded(name string) bool {
+	_, kept := s.Files[name]
+	return !kept && !s.IsExcluded(name) && !dependencyPath(name) && s.Excluded > len(s.ExcludedPaths)
+}
+
+func (s *Snapshot) sortExcluded() {
+	slices.Sort(s.ExcludedPaths)
+	s.ExcludedPaths = slices.Compact(s.ExcludedPaths)
 }
 
 // FromArchive reads regular text files only. Archive paths are never extracted
@@ -83,6 +113,7 @@ func FromArchive(data []byte, commit string, secrets ...string) (*Snapshot, erro
 			return nil, err
 		}
 	}
+	c.s.sortExcluded()
 	return c.s, nil
 }
 
@@ -130,6 +161,7 @@ func FromDir(dir, commit string, secrets ...string) (*Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading source directory: %w", err)
 	}
+	c.s.sortExcluded()
 	return c.s, nil
 }
 
@@ -141,13 +173,18 @@ type collector struct {
 
 // add keeps one regular UTF-8 text file. Links and binary files are skipped
 // silently because they hold no reviewable source; other skipped files count
-// as excluded.
+// as excluded. Private keys are redacted in place, and a file is excluded
+// only when one of its keys cannot be fully redacted.
 func (c *collector) add(name string, regular bool, size int64, read func() ([]byte, error)) error {
 	if dependencyPath(name) || !regular {
 		return nil
 	}
-	if excludedPath(name) || security.ScanSecrets(name, c.secrets...) != "" {
+	if security.ScanSecrets(name, c.secrets...) != "" {
 		c.s.Excluded++
+		return nil
+	}
+	if excludedPath(name) {
+		c.s.exclude(name)
 		return nil
 	}
 	content, err := read()
@@ -158,16 +195,16 @@ func (c *collector) add(name string, regular bool, size int64, read func() ([]by
 	if binary(content, oversized) {
 		return nil
 	}
-	if oversized || bytes.Contains(content, []byte("PRIVATE KEY-----")) {
-		c.s.Excluded++
+	if oversized {
+		c.s.exclude(name)
 		return nil
 	}
 	if _, exists := c.s.Files[name]; exists {
 		return errors.New("source archive contains duplicate paths")
 	}
 	text := security.Scrub(string(content), c.secrets...)
-	if len(text) > maxFileBytes {
-		c.s.Excluded++
+	if len(text) > maxFileBytes || !security.PrivateKeysFullyRedacted(text) {
+		c.s.exclude(name)
 		return nil
 	}
 	c.total += len(text)
@@ -190,12 +227,21 @@ func Decode(data []byte, commit string, secrets ...string) (*Snapshot, error) {
 	if commit == "" || s.Commit != commit {
 		return nil, errors.New("source snapshot does not match the reviewed commit")
 	}
-	if len(s.Files) > maxFiles || s.Excluded < 0 {
+	if len(s.Files) > maxFiles || s.Excluded < 0 || len(s.ExcludedPaths) > s.Excluded {
 		return nil, errors.New("invalid source snapshot metadata")
+	}
+	for i, name := range s.ExcludedPaths {
+		_, kept := s.Files[name]
+		if !safePath(name) || kept || (i > 0 && s.ExcludedPaths[i-1] >= name) || security.ScanSecrets(name, secrets...) != "" {
+			return nil, errors.New("invalid source snapshot metadata")
+		}
 	}
 	total := 0
 	for name, content := range s.Files {
-		if !safePath(name) || excludedPath(name) || security.ScanSecrets(name, secrets...) != "" || len(content) > maxFileBytes || !utf8.ValidString(content) || strings.ContainsRune(content, 0) || strings.Contains(content, "PRIVATE KEY-----") {
+		if !safePath(name) || excludedPath(name) || security.ScanSecrets(name, secrets...) != "" || len(content) > maxFileBytes || !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
+			return nil, errors.New("source snapshot contains an invalid file")
+		}
+		if security.ContainsPrivateKey(content) || !security.PrivateKeysFullyRedacted(content) {
 			return nil, errors.New("source snapshot contains an invalid file")
 		}
 		content = security.Scrub(content, secrets...)

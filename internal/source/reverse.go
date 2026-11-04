@@ -2,6 +2,7 @@ package source
 
 import (
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -15,10 +16,21 @@ func Reverse(head *Snapshot, d *Diff, commit string) *Snapshot {
 	for name, content := range head.Files {
 		before.Files[name] = content
 	}
+	newPaths := map[string]bool{}
 	// Remove every new-side path first so renames that swap names still work.
 	for _, file := range d.Files {
+		if file.NewPath != "" {
+			newPaths[file.NewPath] = true
+		}
 		if file.NewPath != "" && file.Status != "copied" {
 			delete(before.Files, file.NewPath)
+		}
+	}
+	// Head-side names the diff introduced or changed say nothing about the
+	// old side; failures below record the old names that matter.
+	for _, name := range head.ExcludedPaths {
+		if !newPaths[name] {
+			before.ExcludedPaths = append(before.ExcludedPaths, name)
 		}
 	}
 	for _, file := range d.Files {
@@ -26,7 +38,7 @@ func Reverse(head *Snapshot, d *Diff, commit string) *Snapshot {
 		case file.Status == "added" || file.Status == "copied", file.Binary, dependencyPath(file.OldPath):
 			continue
 		case !safePath(file.OldPath) || excludedPath(file.OldPath):
-			before.Excluded++
+			before.exclude(file.OldPath)
 			continue
 		}
 		var content string
@@ -36,17 +48,22 @@ func Reverse(head *Snapshot, d *Diff, commit string) *Snapshot {
 		} else {
 			current, ok := head.Files[file.NewPath]
 			if !ok {
-				before.Excluded++
+				before.exclude(file.OldPath)
 				continue
 			}
 			content, err = unapply(current, file.Hunks)
 		}
 		if err != nil || len(content) > maxFileBytes {
-			before.Excluded++
+			before.exclude(file.OldPath)
 			continue
 		}
 		before.Files[file.OldPath] = content
 	}
+	before.ExcludedPaths = slices.DeleteFunc(before.ExcludedPaths, func(name string) bool {
+		_, kept := before.Files[name]
+		return kept
+	})
+	before.sortExcluded()
 	return before
 }
 

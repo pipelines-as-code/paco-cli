@@ -84,7 +84,7 @@ func TestCollectPinnedComparison(t *testing.T) {
 	assert.Equal(t, manifest.TargetBaseSHA, "def456")
 	assert.Equal(t, manifest.MergeBaseSHA, "aaa111")
 	assert.Equal(t, manifest.DiffDigest, fmt.Sprintf("%x", sha256.Sum256([]byte(simpleDiff))))
-	assert.Equal(t, manifest.ContextStatus, "partial")
+	assert.Equal(t, manifest.ContextStatus, "complete")
 	assert.Equal(t, manifest.Head.Status, "partial")
 	assert.Equal(t, manifest.Head.Excluded, 1)
 	assert.Equal(t, manifest.Before.Status, "available")

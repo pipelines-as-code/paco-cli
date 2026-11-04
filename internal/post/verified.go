@@ -95,7 +95,8 @@ func postVerified(ctx context.Context, ws *artifact.Workspace, t *target, rev *r
 		body += "\n- " + limitation
 	}
 	if status.Accepted == 0 {
-		body += "\n\nNo new verified findings. This is not a guarantee that the change is defect-free."
+		body += "\n\nPaco found **no new confirmed issues** in the code reviewed."
+		body += "\n\n> [!NOTE]\n> Take this AI review with a grain of salt and use it alongside tests and human review."
 	}
 	for _, finding := range rev.SummaryFindings {
 		body += fmt.Sprintf("\n\n[%s] `%s` (before line %d): %s",

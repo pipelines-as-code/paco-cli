@@ -17,8 +17,7 @@ var redactPatterns = []*regexp.Regexp{
 
 const replacement = "[REDACTED]"
 
-// Private-key markers get distinct placeholders so a later check can still
-// tell where a key block started and ended.
+// Preserve key markers so stored snapshots cannot hide keys behind redaction
 const (
 	privateKeyBeginPlaceholder = "[REDACTED PRIVATE KEY BEGIN]"
 	privateKeyEndPlaceholder   = "[REDACTED PRIVATE KEY END]"
@@ -29,7 +28,6 @@ var (
 	privateKeyEnd   = regexp.MustCompile(`-----END [A-Z ]*PRIVATE KEY-----`)
 	pemBodyToken    = regexp.MustCompile(`^[A-Za-z0-9+/]{40,}={0,2}$`)
 	pemTailToken    = regexp.MustCompile(`^[A-Za-z0-9+/]+={0,2}$`)
-	pemHeader       = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*: `)
 )
 
 // Redact masks credential patterns in plain text. Key body lines are masked
@@ -101,8 +99,7 @@ func unwrap(line string) (int, int) {
 
 // maskedLine reports the span of a line holding only a base64 key body token.
 // Requiring upper case, lower case and digits keeps hex hashes and words out.
-// A shorter final line must be a whole base64 quantum with padding, or be
-// long enough with mixed character classes to rule out ordinary words.
+// Short tails require base64 punctuation to avoid masking ordinary identifiers.
 func maskedLine(line string) (int, int, bool) {
 	start, end := unwrap(line)
 	token := line[start:end]
@@ -112,84 +109,17 @@ func maskedLine(line string) (int, int, bool) {
 	body := pemBodyToken.MatchString(token) && mixed
 	padded := strings.HasSuffix(token, "=")
 	tail := pemTailToken.MatchString(token) && len(token)%4 == 0 &&
-		(padded && len(token) >= 8 || mixed && len(token) >= 16)
+		(padded && len(token) >= 8 || mixed && len(token) >= 16 && strings.ContainsAny(token, "+/"))
 	if !body && !tail {
 		return 0, 0, false
 	}
 	return start, end, true
 }
 
-// PrivateKeysFullyRedacted reports whether every private key block in text,
-// raw or already redacted, has only lines that Redact masks completely. A
-// block must start with the only marker on its line, at the end of it, and
-// close with the only marker on a line, at its start; in between, only blank
-// lines, PEM headers and masked or maskable body lines are allowed. Keys
-// written in other shapes, such as escaped newlines inside one JSON string,
-// fail.
-func PrivateKeysFullyRedacted(text string) bool {
-	lines := strings.Split(text, "\n")
-	for i := 0; i < len(lines); i++ {
-		begins, ends := markers(lines[i])
-		if begins == 0 {
-			continue
-		}
-		if begins > 1 || ends > 0 || !endsWithBegin(lines[i]) {
-			return false
-		}
-		closed := false
-		for i++; i < len(lines); i++ {
-			line := lines[i]
-			if begins, ends := markers(line); begins > 0 || ends > 0 {
-				if begins > 0 || ends > 1 || !startsWithEnd(line) {
-					return false
-				}
-				closed = true
-				break
-			}
-			start, end := unwrap(line)
-			payload := line[start:end]
-			_, _, masked := maskedLine(line)
-			if payload == "" || payload == replacement || masked || pemHeader.MatchString(payload) {
-				continue
-			}
-			return false
-		}
-		if !closed {
-			return false
-		}
-	}
-	return true
-}
-
-// ContainsPrivateKey reports whether text has an unredacted BEGIN marker.
+// Masked markers are reserved so snapshots written by older collectors are checked too.
 func ContainsPrivateKey(text string) bool {
-	return privateKeyBegin.MatchString(text)
-}
-
-func markers(line string) (begins, ends int) {
-	begins = len(privateKeyBegin.FindAllStringIndex(line, -1)) + strings.Count(line, privateKeyBeginPlaceholder)
-	ends = len(privateKeyEnd.FindAllStringIndex(line, -1)) + strings.Count(line, privateKeyEndPlaceholder)
-	return begins, ends
-}
-
-func endsWithBegin(line string) bool {
-	start, end := unwrap(line)
-	line = line[start:end]
-	if strings.HasSuffix(line, privateKeyBeginPlaceholder) {
-		return true
-	}
-	loc := privateKeyBegin.FindStringIndex(line)
-	return loc != nil && loc[1] == len(line)
-}
-
-func startsWithEnd(line string) bool {
-	line = strings.TrimLeft(line, " \t")
-	line = strings.TrimLeft(line, "\"'`")
-	if strings.HasPrefix(line, privateKeyEndPlaceholder) {
-		return true
-	}
-	loc := privateKeyEnd.FindStringIndex(line)
-	return loc != nil && loc[0] == 0
+	return strings.Contains(text, "PRIVATE KEY-----") ||
+		strings.Contains(text, privateKeyBeginPlaceholder) || strings.Contains(text, privateKeyEndPlaceholder)
 }
 
 // Scrub replaces known credential literals before applying pattern redaction.

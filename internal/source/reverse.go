@@ -4,6 +4,8 @@ import (
 	"errors"
 	"slices"
 	"strings"
+
+	"github.com/pipelines-as-code/paco-cli/internal/security"
 )
 
 // Reverse rebuilds the old side of d by undoing it on head, for callers that
@@ -29,7 +31,9 @@ func Reverse(head *Snapshot, d *Diff, commit string) *Snapshot {
 	// Head-side names the diff introduced or changed say nothing about the
 	// old side; failures below record the old names that matter.
 	for _, name := range head.ExcludedPaths {
-		if !newPaths[name] {
+		if newPaths[name] {
+			before.Excluded--
+		} else {
 			before.ExcludedPaths = append(before.ExcludedPaths, name)
 		}
 	}
@@ -53,7 +57,7 @@ func Reverse(head *Snapshot, d *Diff, commit string) *Snapshot {
 			}
 			content, err = unapply(current, file.Hunks)
 		}
-		if err != nil || len(content) > maxFileBytes {
+		if err != nil || len(content) > maxFileBytes || security.ContainsPrivateKey(content) {
 			before.exclude(file.OldPath)
 			continue
 		}
@@ -61,6 +65,9 @@ func Reverse(head *Snapshot, d *Diff, commit string) *Snapshot {
 	}
 	before.ExcludedPaths = slices.DeleteFunc(before.ExcludedPaths, func(name string) bool {
 		_, kept := before.Files[name]
+		if kept {
+			before.Excluded--
+		}
 		return kept
 	})
 	before.sortExcluded()

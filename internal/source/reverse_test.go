@@ -160,19 +160,48 @@ new file mode 100644
 	before := source.Reverse(head, parsed, "base")
 	assert.DeepEqual(t, before.Files, map[string]string{"a.txt": "small\n"})
 	assert.DeepEqual(t, before.ExcludedPaths, []string{"b.txt", "go.sum"})
+	assert.Equal(t, before.Excluded, 2)
+	assert.Assert(t, !before.MayBeExcluded("symlink.txt"))
 	encoded, err := json.Marshal(before)
 	assert.NilError(t, err)
 	_, err = source.Decode(encoded, "base")
 	assert.NilError(t, err)
 }
 
-// A key edit redacts the same way in the diff and in both snapshots, even
-// when the hunk shows no key markers and body lines start with "+".
-func TestRedactedKeyDiffMatchesSnapshots(t *testing.T) {
+func TestReverseExcludesUnredactableKeys(t *testing.T) {
+	key := "-----BEGIN PRIVATE KEY-----\n" + strings.Repeat("Ab1/", 16) + "\n-----END PRIVATE KEY-----\n"
+	content, err := json.Marshal(map[string]string{"private_key": key})
+	assert.NilError(t, err)
+	for _, deleted := range []bool{true, false} {
+		t.Run(fmt.Sprintf("deleted=%t", deleted), func(t *testing.T) {
+			head := &source.Snapshot{Commit: "head", Files: map[string]string{}}
+			raw := "diff --git a/sa.json b/sa.json\n"
+			if deleted {
+				head.Excluded = 1
+				head.ExcludedPaths = []string{"sa.json"}
+				raw += "deleted file mode 100644\n--- a/sa.json\n+++ /dev/null\n@@ -1 +0,0 @@\n-" + string(content) + "\n"
+			} else {
+				head.Files["sa.json"] = "{}\n"
+				raw += "--- a/sa.json\n+++ b/sa.json\n@@ -1 +1 @@\n-" + string(content) + "\n+{}\n"
+			}
+			parsed, err := diff.Parse(security.ScrubDiff(raw))
+			assert.NilError(t, err)
+			before := source.Reverse(head, parsed, "base")
+			assert.Equal(t, len(before.Files), 0)
+			assert.Equal(t, before.Excluded, 1)
+			assert.DeepEqual(t, before.ExcludedPaths, []string{"sa.json"})
+			encoded, err := json.Marshal(before)
+			assert.NilError(t, err)
+			_, err = source.Decode(encoded, "base")
+			assert.NilError(t, err)
+		})
+	}
+}
+
+func TestRedactedKeyDiffWithExcludedSnapshots(t *testing.T) {
 	body := func(i int) string { return fmt.Sprintf("MIIC%s%04d", strings.Repeat("Ab1/", 14), i) }
 	plusLine := "+" + body(99)
 	lines := []string{"package k", "", "const key = `-----BEGIN RSA PRIVATE KEY-----", body(1), body(2), plusLine, body(4), body(5), body(6), body(7), body(8), "-----END RSA PRIVATE KEY-----`", ""}
-	beforeText := strings.Join(lines, "\n")
 	lines[7] = "+" + body(50)
 	headText := strings.Join(lines, "\n")
 	rawDiff := "diff --git a/k.go b/k.go\n--- a/k.go\n+++ b/k.go\n@@ -5,7 +5,7 @@\n " + body(2) + "\n " + plusLine + "\n " + body(4) + "\n-" + body(5) + "\n+" + "+" + body(50) + "\n " + body(6) + "\n " + body(7) + "\n " + body(8) + "\n"
@@ -181,20 +210,22 @@ func TestRedactedKeyDiffMatchesSnapshots(t *testing.T) {
 	assert.Assert(t, !strings.Contains(redactedDiff, "Ab1/"), redactedDiff)
 	parsed, err := diff.Parse(redactedDiff)
 	assert.NilError(t, err)
-	head := &source.Snapshot{Commit: "head", Files: map[string]string{"k.go": security.Scrub(headText)}}
+	dir := t.TempDir()
+	assert.NilError(t, os.WriteFile(filepath.Join(dir, "k.go"), []byte(headText), 0o600))
+	head, err := source.FromDir(dir, "head")
+	assert.NilError(t, err)
 	before := source.Reverse(head, parsed, "base")
-	assert.Equal(t, before.Files["k.go"], security.Scrub(beforeText))
-	assert.Equal(t, before.Excluded, 0)
-	for _, line := range parsed.Files[0].Hunks[0].Lines {
-		for _, side := range []struct {
-			snapshot *source.Snapshot
-			number   int
-		}{{head, line.NewLine}, {before, line.OldLine}} {
-			if side.number > 0 {
-				assert.Equal(t, strings.Split(side.snapshot.Files["k.go"], "\n")[side.number-1], line.Content)
-			}
-		}
+	for _, snapshot := range []*source.Snapshot{head, before} {
+		assert.Equal(t, len(snapshot.Files), 0)
+		assert.Equal(t, snapshot.Excluded, 1)
+		assert.DeepEqual(t, snapshot.ExcludedPaths, []string{"k.go"})
+		encoded, err := json.Marshal(snapshot)
+		assert.NilError(t, err)
+		_, err = source.Decode(encoded, snapshot.Commit)
+		assert.NilError(t, err)
 	}
+	assert.Assert(t, parsed.Files[0].Hunks[0].Complete)
+	assert.Equal(t, len(parsed.Files[0].Hunks[0].Lines), 8)
 }
 
 func TestReverseSkipsDependencyFiles(t *testing.T) {

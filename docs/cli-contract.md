@@ -157,15 +157,19 @@ The diff stays authoritative for anchors.
 regular UTF-8 text files in memory without extracting them to disk. It
 skips symlinks, hardlinks, binary files, files over 512 KiB, common
 credential files, and dependency directories such as `vendor` and
-`node_modules`. PEM private keys, such as test fixtures, are redacted
-line by line and the file is kept; a file is excluded only when one of
-its keys cannot be fully redacted, for example a key stored as a single
-escaped JSON string. Text files that are too large or look like
-credentials count as excluded, and the snapshot records their paths. The
-review reports them only when the PR changes one of them or Claude tries
+`node_modules`. Files containing PEM private-key markers, including test
+fixtures, are excluded before redaction. Recognised key lines are still
+masked in diffs. Detection matches literal text; it does not reconstruct
+keys assembled with string concatenation or other encoding. Text files
+that are too large or look like credentials count as excluded, and the
+snapshot records their paths when safe to show. The review reports them
+only when the PR changes one of them or Claude tries
 to read one, so an unrelated large file does not mark every review as
-incomplete. Symlinks, binary files (a NUL byte or invalid UTF-8) and
-dependency directories hold no reviewable source, so they are skipped
+incomplete. If exclusion names are unavailable, a missing read conservatively
+marks coverage incomplete, even when the requested path was a typo. These
+unnamed exclusions are reported once without paths. Symlinks, binary files
+(a NUL byte or invalid UTF-8) and dependency directories hold no reviewable
+source, so they are skipped
 silently; the search tools tell Claude they are never included. Binary
 changes in the PR itself are still reported.
 

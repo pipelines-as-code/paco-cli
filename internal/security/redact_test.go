@@ -123,17 +123,14 @@ func TestRedactPrivateKeyBlock(t *testing.T) {
 	key := "const fakePrivateKey = `-----BEGIN RSA PRIVATE KEY-----\n" + keyLine + "\n" + keyLine + "\nQsncVExbMiPa9Oclo5qLuTosS8qwHm1MJEytp3/SkB8=\n-----END RSA PRIVATE KEY-----`\n"
 	got := Redact(key)
 	assert.Equal(t, got, "const fakePrivateKey = `[REDACTED PRIVATE KEY BEGIN]\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED PRIVATE KEY END]`\n")
-	assert.Assert(t, PrivateKeysFullyRedacted(key))
-	assert.Assert(t, PrivateKeysFullyRedacted(got))
 
 	concatenated := "key := \"-----BEGIN PRIVATE KEY-----\\n\" +\n\t\"" + keyLine + "\\n\" +\n\t\"-----END PRIVATE KEY-----\\n\""
 	assert.Equal(t, Redact(concatenated), "key := \"[REDACTED PRIVATE KEY BEGIN]\\n\" +\n\t\"[REDACTED]\\n\" +\n\t\"[REDACTED PRIVATE KEY END]\\n\"")
-	assert.Assert(t, PrivateKeysFullyRedacted(concatenated))
 }
 
 func TestRedactDiffMatchesSource(t *testing.T) {
 	plus := "+" + keyLine
-	source := []string{keyLine, plus, "  " + plus, "x := 1"}
+	source := []string{keyLine, plus, "  " + plus, "Ab1/Cd2/Ef3/Gh4I", "ConfigurationV12", "x := 1"}
 	for _, line := range source {
 		want := Redact(line)
 		for _, prefix := range []string{"+", "-", " "} {
@@ -159,35 +156,23 @@ func TestRedactLeavesOrdinaryLines(t *testing.T) {
 		"x := \"" + keyLine + "\" + y",
 		"errFoo2,",
 		`"Windows7",`,
+		`"ubuntu2204Latest",`,
+		"ConfigurationV12",
 		"}",
 	} {
 		assert.Equal(t, Redact(line), line)
 	}
 }
 
-func TestPrivateKeysFullyRedacted(t *testing.T) {
-	begin, end := "-----BEGIN RSA PRIVATE KEY-----", "-----END RSA PRIVATE KEY-----"
-	tests := []struct {
-		name string
-		text string
-		want bool
-	}{
-		{name: "no key", text: "func main() {}\n// PRIVATE KEY----- marker", want: true},
-		{name: "pem file", text: begin + "\n" + keyLine + "\nAb1/Cd2=\n" + end + "\n", want: true},
-		{name: "unmaskable short tail", text: begin + "\n" + keyLine + "\nAb1=\n" + end + "\n", want: false},
-		{name: "escaped key before a block", text: `"` + begin + `\n` + keyLine + `\n` + end + `" + "` + begin + "\n" + keyLine + "\n" + end, want: false},
-		{name: "second key after the end", text: begin + "\n" + keyLine + "\n" + end + ` "` + begin + `\n` + keyLine + `"`, want: false},
-		{name: "encrypted headers", text: begin + "\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00FF\n\n" + keyLine + "\n" + end, want: true},
-		{name: "escaped json", text: `{"private_key": "` + begin + `\n` + keyLine + `\n` + end + `\n"}`, want: false},
-		{name: "scrubbed escaped json", text: Redact(`{"private_key": "` + begin + `\n` + keyLine + `\n` + end + `\n"}`), want: false},
-		{name: "non base64 body", text: begin + "\nsynthetic-key-body\n" + end, want: false},
-		{name: "scrubbed non base64 body", text: Redact(begin + "\nsynthetic-key-body\n" + end), want: false},
-		{name: "short line before the end", text: begin + "\nAb1\n" + keyLine + "\n" + end, want: false},
-		{name: "unterminated", text: begin + "\n" + keyLine + "\n", want: false},
+func TestContainsPrivateKey(t *testing.T) {
+	for _, text := range []string{
+		"-----BEGIN PRIVATE KEY-----",
+		"-----END RSA PRIVATE KEY-----",
+		`"-----BEGIN " + "PRIVATE KEY-----"`,
+		"[REDACTED PRIVATE KEY BEGIN]",
+		"[REDACTED PRIVATE KEY END]",
+	} {
+		assert.Assert(t, ContainsPrivateKey(text))
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, PrivateKeysFullyRedacted(tt.text), tt.want)
-		})
-	}
+	assert.Assert(t, !ContainsPrivateKey("func main() {}"))
 }

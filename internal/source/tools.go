@@ -15,6 +15,8 @@ import (
 
 const maxResultBytes = 15000
 
+const UnnamedExclusionLimitation = "Some source files could not be loaded because they were too large, looked like credentials, or could not be read."
+
 // UnavailableError reports collected data that no narrower tool request can
 // return. Limitation is fixed text owned by Paco, never source content, so
 // callers can show it as a coverage gap.
@@ -109,6 +111,12 @@ func (s *Snapshot) call(ctx context.Context, name string, input json.RawMessage,
 				message:    "file was excluded during collection because it was too large, looked like credentials, or could not be read; it cannot be reviewed",
 				Limitation: fmt.Sprintf("Could not load %q at %s because it was too large, looked like credentials, or could not be read.", args.Path, shortCommit(s.Commit)),
 				Path:       args.Path,
+			}
+		}
+		if !ok && s.MayBeExcluded(args.Path) {
+			return "", &UnavailableError{
+				message:    "file may have been excluded during collection; it cannot be reviewed",
+				Limitation: UnnamedExclusionLimitation,
 			}
 		}
 		if !ok {

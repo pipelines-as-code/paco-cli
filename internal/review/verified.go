@@ -328,7 +328,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if modelID == "" {
 		modelID = backend.DefaultModel
 	}
-	tools := &coverageTools{Toolset: input.tools, reported: reported}
+	tools := &coverageTools{Toolset: input.tools, reported: reported, reportedUnnamed: strings.Contains(line, source.UnnamedExclusionLimitation)}
 	request := func(instructions, prompt string, schema map[string]any, limits *model.Limits) (string, error) {
 		shape, err := json.Marshal(schema)
 		if err != nil {
@@ -565,7 +565,8 @@ type coverageTools struct {
 	model.Toolset
 	gaps []string
 	// reported lists excluded paths already named in a limitation.
-	reported []string
+	reported        []string
+	reportedUnnamed bool
 }
 
 // Call records Paco-owned limitation text for data no request can return;
@@ -574,17 +575,20 @@ type coverageTools struct {
 func (t *coverageTools) Call(ctx context.Context, name string, input json.RawMessage) (string, error) {
 	output, err := t.Toolset.Call(ctx, name, input)
 	var unavailable *source.UnavailableError
-	if errors.As(err, &unavailable) && !slices.Contains(t.gaps, unavailable.Limitation) && !slices.Contains(t.reported, unavailable.Path) {
+	if !errors.As(err, &unavailable) {
+		return output, err
+	}
+	if t.reportedUnnamed && unavailable.Limitation == source.UnnamedExclusionLimitation {
+		return output, err
+	}
+	if !slices.Contains(t.gaps, unavailable.Limitation) && !slices.Contains(t.reported, unavailable.Path) {
 		t.gaps = append(t.gaps, unavailable.Limitation)
 	}
 	return output, err
 }
 
-// excludedLimitation names the changed files a snapshot left out by name,
-// and returns those paths. A changed file that may be among the exclusions
-// recorded only as a count gets a line without names. Exclusions elsewhere in
-// the repository do not limit the review of this change and are reported only
-// if a read hits them.
+// Missing changed files may be unnamed exclusions, so their limitation
+// omits paths even if the diff names them.
 func excludedLimitation(d *source.Diff, head, before *source.Snapshot) (string, []string) {
 	var headPaths, beforePaths []string
 	unnamed := false
@@ -624,10 +628,9 @@ func excludedLimitation(d *source.Diff, head, before *source.Snapshot) (string, 
 			parts = append(parts, fmt.Sprintf("%s at base %s", names(beforePaths), shortSHA(before.Commit)))
 		}
 	}
-	const unnamedLine = "Some changed files could not be loaded because they were too large, looked like credentials, or could not be read."
 	if len(parts) == 0 {
 		if unnamed {
-			return unnamedLine, nil
+			return source.UnnamedExclusionLimitation, nil
 		}
 		return "", nil
 	}
@@ -639,7 +642,7 @@ func excludedLimitation(d *source.Diff, head, before *source.Snapshot) (string, 
 	slices.Sort(reported)
 	line := "Could not load " + strings.Join(parts, " and ") + " " + reason
 	if unnamed {
-		line += " " + unnamedLine
+		line += " " + source.UnnamedExclusionLimitation
 	}
 	return line, slices.Compact(reported)
 }

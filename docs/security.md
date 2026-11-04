@@ -46,9 +46,16 @@ workspace and before logging. Patterns:
 - JWTs: `eyJ...` base64 header pairs
 - AWS access keys: `AKIA` prefixed
 - GCP service account emails: `*@*.iam.gserviceaccount.com`
-- PEM private keys: the BEGIN and END markers and each base64 body
-  line, keeping line numbers intact
+- PEM private keys: recognised BEGIN and END markers and base64-shaped body
+  lines, keeping line numbers intact
 - Anthropic API keys: `sk-ant-` prefixed
+
+Source snapshots exclude whole files containing the literal `PRIVATE KEY-----`
+fragment before redaction. Raw key fragments and the reserved
+`[REDACTED PRIVATE KEY BEGIN]` and `[REDACTED PRIVATE KEY END]` placeholders
+are also rejected when loading stored snapshots or rebuilding old files.
+The placeholders trigger exclusion even in comments or example output.
+Pattern matching does not reconstruct concatenated or otherwise encoded secrets.
 
 ## Secret Scanning
 

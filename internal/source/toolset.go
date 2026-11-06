@@ -21,8 +21,12 @@ type Toolset struct {
 func (t *Toolset) Definitions() []model.Tool {
 	tools := (*Snapshot)(nil).Definitions()
 	for i := range tools {
+		revisions := []string{"head"}
+		if t.Before != nil {
+			revisions = append(revisions, "before")
+		}
 		tools[i].Properties["revision"] = map[string]any{
-			"type": "string", "enum": []string{"head", "before"},
+			"type": "string", "enum": revisions,
 			"description": "Collected revision, defaults to head. Before is the comparison merge base, not the target branch tip.",
 		}
 		tools[i].Description = strings.ReplaceAll(tools[i].Description, "PR-head", "selected revision")

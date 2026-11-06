@@ -24,7 +24,8 @@ var promptInventory string
 // PromptDigest identifies the prompt set used by a recorded evaluation.
 func PromptDigest() string {
 	return Digest([]byte(promptHeader + promptModeReview + promptModeSummary +
-		systemPrompt + toolSystemPrompt + discoverPrompt + verifyPrompt + promptInventory + model.InvestigationInstructions + model.ProgressToolDescription))
+		systemPrompt + toolSystemPrompt + discoverPrompt + verifyPrompt + promptInventory +
+		batchInstructions + integrationInstructions + model.InvestigationInstructions + model.ProgressToolDescription))
 }
 
 // BuildPrompt assembles the single-pass prompt. inventory is the rendered

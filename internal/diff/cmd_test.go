@@ -123,8 +123,8 @@ func TestRunSkips(t *testing.T) {
 		},
 		{
 			name:  "diff too large",
-			setup: func(f *fakeGitHub) { happyPath(f, strings.Repeat("x", maxDiffBytes+1)) },
-			want:  "Paco: PR diff is too large (200001 bytes, limit is 200000), so review was skipped instead of using a truncated diff.",
+			setup: func(f *fakeGitHub) { happyPath(f, strings.Repeat("x", MaxBytes+1)) },
+			want:  "Paco: PR diff is too large (4194305 bytes, limit is 4194304), so review was skipped instead of using a truncated diff.",
 		},
 	}
 	for _, tt := range tests {
@@ -174,6 +174,23 @@ func TestRunSuccess(t *testing.T) {
 	assert.Assert(t, strings.Contains(string(claim), `"claimed":true`), string(claim))
 }
 
+func TestRunPreservesLargeDiff(t *testing.T) {
+	patch := "diff --git a/large.go b/large.go\nnew file mode 100644\n--- /dev/null\n+++ b/large.go\n@@ -0,0 +1,1000 @@\n" + strings.Repeat("+"+strings.Repeat("x", 300)+"\n", 1000)
+	ws := t.TempDir()
+	f, client := newFakeGitHub(t)
+	happyPath(f, patch)
+	assert.NilError(t, Run(context.Background(), Options{Repo: "owner/repo", PRNumber: 1, Workspace: ws, GitHub: client}))
+	assert.Assert(t, !fileExists(filepath.Join(ws, artifact.FileError)))
+	stored, err := os.ReadFile(filepath.Join(ws, artifact.FileDiff))
+	assert.NilError(t, err)
+	assert.Equal(t, string(stored), patch)
+	lines, err := os.ReadFile(filepath.Join(ws, artifact.FileValidLines))
+	assert.NilError(t, err)
+	var valid map[string]map[string]bool
+	assert.NilError(t, json.Unmarshal(lines, &valid))
+	assert.Equal(t, len(valid["large.go"]), 1000)
+}
+
 func TestRunReactsToTriggerComment(t *testing.T) {
 	f, c := newFakeGitHub(t)
 	happyPath(f, simpleDiff)
@@ -189,7 +206,7 @@ func TestRunReactsToTriggerComment(t *testing.T) {
 
 func TestRunSkipLeavesTheRunFetching(t *testing.T) {
 	f, c := newFakeGitHub(t)
-	happyPath(f, strings.Repeat("x", maxDiffBytes+1))
+	happyPath(f, strings.Repeat("x", MaxBytes+1))
 	pr := f.PR("paco[bot]")
 	ws := t.TempDir()
 

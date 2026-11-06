@@ -149,7 +149,7 @@ func TestParseRejectsMalformedDiff(t *testing.T) {
 		{name: "hunk without file", text: "@@ -1 +1 @@\n-a\n+b\n"},
 		{name: "zero coordinate", text: "diff --git a/a b/a\n@@ -0 +1 @@\n-a\n+b\n"},
 		{name: "bad quoting", text: "diff --git \"a/b b/b\n"},
-		{name: "oversized", text: strings.Repeat("a", maxDiffBytes+1)},
+		{name: "oversized", text: strings.Repeat("a", MaxBytes+1)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

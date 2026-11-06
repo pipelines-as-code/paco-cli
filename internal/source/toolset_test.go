@@ -62,6 +62,12 @@ func TestRevisionTools(t *testing.T) {
 
 func TestUnavailableAndBoundedDiffTools(t *testing.T) {
 	tools := &Toolset{}
+	for _, tool := range tools.Definitions() {
+		if tool.Name != "read_diff" {
+			revision := tool.Properties["revision"].(map[string]any)
+			assert.DeepEqual(t, revision["enum"], []string{"head"})
+		}
+	}
 	_, err := tools.Call(context.Background(), "read_file", json.RawMessage(`{"revision":"before"}`))
 	assert.ErrorContains(t, err, "before snapshot is unavailable")
 	_, err = tools.Call(context.Background(), "read_diff", json.RawMessage(`{"path":"a.go"}`))

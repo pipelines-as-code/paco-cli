@@ -441,12 +441,14 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		key := candidate.Path + "\x00" + candidate.Side + "\x00" + candidate.Claim + "\x00" + candidate.Trigger + "\x00" + candidate.Impact
 		if index, ok := seen[key]; ok {
 			status.Duplicates++
-			status.Decisions = append(status.Decisions, Disposition{candidate.ID, "duplicate", "Identical claim, trigger and impact."})
+			displaced := candidate
 			// Keep the most severe copy so the candidate cap cannot drop a
 			// critical finding in favour of a mild duplicate from another batch.
 			if severityRank(candidate.Severity) < severityRank(candidates[index].Severity) {
+				displaced = candidates[index]
 				candidates[index] = candidate
 			}
+			status.Decisions = append(status.Decisions, Disposition{displaced.ID, "duplicate", "Identical claim, trigger and impact."})
 			continue
 		}
 		seen[key] = len(candidates)
@@ -486,6 +488,11 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 				return fail(err)
 			}
 			contextPrompt += excerpts
+			// The verifier writes the replacement summary, so give it the
+			// integration pass view of the changes the excerpts do not cover.
+			if discovered.Summary != "" {
+				contextPrompt += "\nIntegration summary of the whole PR (untrusted data):\n" + discovered.Summary + "\n"
+			}
 		}
 		data, err := json.Marshal(candidates)
 		if err != nil {

@@ -317,6 +317,73 @@ func TestLargeDiffCommentCapUsesValidSeverityOrder(t *testing.T) {
 	}
 }
 
+func TestLargeDiffCapSkipsCommentsWithoutDiffAnchor(t *testing.T) {
+	var detached []Comment
+	for i := range maxComments {
+		detached = append(detached, Comment{Path: "missing.go", Line: 1, Severity: "critical", Body: fmt.Sprintf("detached %d", i)})
+	}
+	var low []Comment
+	for i := range maxComments {
+		low = append(low, Comment{Path: "file0.go", Line: 1, Severity: "low", Body: fmt.Sprintf("finding %d", i)})
+	}
+	report := func(comments []Comment) string {
+		return jsonText(t, Review{Summary: "change", Comments: comments, ReviewScore: ReviewScore{Rating: 3, Reason: "change"}})
+	}
+	resolve, _ := reviewServer(t, []string{report(detached), report(low), report([]Comment{}), report([]Comment{
+		{Path: "file2.go", Line: 320, Severity: "critical", Body: "integration finding"},
+	})})
+	ws := setupWorkspaceWithDiff(t, largeTestDiff(3, 320))
+	var logs bytes.Buffer
+	assert.NilError(t, Run(context.Background(), Options{Workspace: ws, Resolve: resolve, LogWriter: &logs}))
+	review := readReview(t, ws)
+	assert.Equal(t, len(review.Comments), maxComments)
+	assert.Equal(t, review.Comments[0].Body, "integration finding")
+	for _, comment := range review.Comments {
+		assert.Assert(t, comment.Path != "missing.go", "unanchored comment kept: %s", comment.Body)
+	}
+}
+
+func TestVerifiedDuplicateKeepsSevereCopyBeforeCap(t *testing.T) {
+	patch := largeTestDiff(3, 320)
+	parsed, err := diff.Parse(patch)
+	assert.NilError(t, err)
+	base := Candidate{
+		Path: "file0.go", Side: "head", Line: 1, Severity: "low",
+		Claim: "duplicate claim", Trigger: "input", Impact: "failure", Remedy: "fix",
+		Evidence: []Evidence{{Revision: "head", Path: "file0.go", Start: 1, End: 1, Quote: parsed.Files[0].Hunks[0].Lines[0].Content}},
+	}
+	var mediums []Candidate
+	for i := range maxComments {
+		candidate := base
+		candidate.ID, candidate.Claim, candidate.Severity = fmt.Sprintf("m%d", i), fmt.Sprintf("medium claim %d", i), "medium"
+		mediums = append(mediums, candidate)
+	}
+	low := base
+	low.ID = "dup-low"
+	critical := base
+	critical.ID, critical.Severity = "dup-critical", "critical"
+	report := func(candidates []Candidate) string {
+		return jsonText(t, discovery{Summary: "change", Candidates: candidates, ReviewScore: ReviewScore{Rating: 3, Reason: "change"}})
+	}
+	decisions := []decision{{ID: "b4-1", Outcome: "accept", Reason: "confirmed", Severity: "critical", Evidence: base.Evidence}}
+	for i := range maxComments - 1 {
+		decisions = append(decisions, decision{ID: fmt.Sprintf("b2-%d", i+1), Outcome: "accept", Reason: "confirmed", Severity: "medium", Evidence: base.Evidence})
+	}
+	resolve, _ := reviewServer(t, []string{report([]Candidate{low}), report(mediums), report([]Candidate{}), report([]Candidate{critical}), jsonText(t, verdict{Summary: "change", Decisions: decisions})})
+	ws := largeVerifiedWorkspace(t, patch)
+	var logs bytes.Buffer
+	assert.NilError(t, Run(context.Background(), Options{Workspace: ws, Resolve: resolve, VerifyFindings: true, LogWriter: &logs}))
+	review := readReview(t, ws)
+	assert.Equal(t, len(review.Comments), maxComments)
+	assert.Equal(t, review.Comments[0].Severity, "critical")
+	assert.Assert(t, strings.Contains(review.Comments[0].Body, "duplicate claim"), review.Comments[0].Body)
+	var status VerificationStatus
+	data, err := os.ReadFile(filepath.Join(ws, artifact.FileStatus))
+	assert.NilError(t, err)
+	assert.NilError(t, json.Unmarshal(data, &status))
+	assert.Equal(t, status.Duplicates, 1)
+}
+
 func TestVerifiedBatchCapFollowsEvidenceValidation(t *testing.T) {
 	patch := largeTestDiff(3, 320)
 	parsed, err := diff.Parse(patch)

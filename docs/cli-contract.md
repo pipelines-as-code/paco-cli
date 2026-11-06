@@ -132,8 +132,10 @@ automatically.
 Diffs over 200,000 bytes use multiple review batches, followed by a pass that
 checks interactions across batches and writes the overall summary. Paco merges
 batch findings in code, removes exact duplicates, and retains up to 30 findings
-or candidates. Normal findings are filtered and ranked by severity before the
-cap. Verified candidates pass evidence validation and deduplication first,
+or candidates. A duplicate keeps its most severe copy. Normal findings whose
+path and line do not appear in the diff are dropped, because GitHub cannot
+attach them, and the rest are ranked by severity before the cap.
+Verified candidates pass evidence validation and deduplication first,
 then severity determines which candidates fit the cap. Candidate overflow
 marks coverage partial. The
 integration pass only adds new findings. Each batch receives

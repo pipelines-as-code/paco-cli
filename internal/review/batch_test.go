@@ -369,7 +369,8 @@ func TestVerifiedDuplicateKeepsSevereCopyBeforeCap(t *testing.T) {
 	for i := range maxComments - 1 {
 		decisions = append(decisions, decision{ID: fmt.Sprintf("b2-%d", i+1), Outcome: "accept", Reason: "confirmed", Severity: "medium", Evidence: base.Evidence})
 	}
-	resolve, _ := reviewServer(t, []string{report([]Candidate{low}), report(mediums), report([]Candidate{}), report([]Candidate{critical}), jsonText(t, verdict{Summary: "change", Decisions: decisions})})
+	integration := jsonText(t, discovery{Summary: "cross-batch overview", Candidates: []Candidate{critical}, ReviewScore: ReviewScore{Rating: 3, Reason: "change"}})
+	resolve, requests := reviewServer(t, []string{report([]Candidate{low}), report(mediums), report([]Candidate{}), integration, jsonText(t, verdict{Summary: "change", Decisions: decisions})})
 	ws := largeVerifiedWorkspace(t, patch)
 	var logs bytes.Buffer
 	assert.NilError(t, Run(context.Background(), Options{Workspace: ws, Resolve: resolve, VerifyFindings: true, LogWriter: &logs}))
@@ -382,6 +383,15 @@ func TestVerifiedDuplicateKeepsSevereCopyBeforeCap(t *testing.T) {
 	assert.NilError(t, err)
 	assert.NilError(t, json.Unmarshal(data, &status))
 	assert.Equal(t, status.Duplicates, 1)
+	var displaced []string
+	for _, d := range status.Decisions {
+		if d.Outcome == "duplicate" {
+			displaced = append(displaced, d.ID)
+		}
+	}
+	assert.Equal(t, fmt.Sprint(displaced), "[b1-1]")
+	assert.Assert(t, strings.Contains(jsonText(t, (*requests)[len(*requests)-1]), "cross-batch overview"),
+		"verification should see the integration summary")
 }
 
 func TestVerifiedBatchCapFollowsEvidenceValidation(t *testing.T) {

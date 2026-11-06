@@ -281,7 +281,11 @@ The extracted object still has to pass every schema and evidence check.
 `.paco-status.json` records versioned provenance, usage, limitations, candidate
 outcomes, publication counts and a scrubbed `failure_reason` when verification
 fails. Candidate outcomes are also printed in the review log, and the summary
-comment lists unpublished candidates with their outcome and reason. Verified `.paco-review.json` output can include
+comment lists unpublished candidates with their outcome and reason. A duplicate
+is listed under the copy that was dropped, not the copy that survived. In a
+batched review the verifier also receives the integration pass summary as
+untrusted context, because the verifier writes the summary that replaces it.
+Verified `.paco-review.json` output can include
 `summary_findings` for deletion-side findings without an added-line anchor.
 Raw model transcripts are not persisted. Review output, mode, failure,
 security-block and status artifacts are cleared before each review attempt.

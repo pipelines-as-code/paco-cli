@@ -32,6 +32,7 @@ type verifiedInput struct {
 	tools    *source.Toolset
 	evidence evidenceContext
 	numbered string
+	batches  []string
 }
 
 func loadVerifiedInput(ws *artifact.Workspace, secrets []string, noExploration bool) (*verifiedInput, error) {
@@ -63,7 +64,7 @@ func loadVerifiedInput(ws *artifact.Workspace, secrets []string, noExploration b
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, fmt.Errorf("invalid diff metadata: %w", err)
 	}
-	diffData, err := read(artifact.FileDiff, 200000)
+	diffData, err := read(artifact.FileDiff, diff.MaxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +120,17 @@ func loadVerifiedInput(ws *artifact.Workspace, secrets []string, noExploration b
 		return nil, err
 	}
 	for _, file := range parsed.Files {
+		var headLines, beforeLines []string
+		if input.tools.Head != nil {
+			if content, ok := input.tools.Head.Files[file.NewPath]; ok {
+				headLines = strings.Split(content, "\n")
+			}
+		}
+		if input.tools.Before != nil {
+			if content, ok := input.tools.Before.Files[file.OldPath]; ok {
+				beforeLines = strings.Split(content, "\n")
+			}
+		}
 		for _, hunk := range file.Hunks {
 			if !hunk.Complete {
 				return nil, errors.New("verified mode requires complete diff hunks")
@@ -127,22 +139,16 @@ func loadVerifiedInput(ws *artifact.Workspace, secrets []string, noExploration b
 		for _, hunk := range file.Hunks {
 			for _, line := range hunk.Lines {
 				for _, item := range []struct {
-					snapshot *source.Snapshot
-					path     string
-					number   int
+					lines  []string
+					number int
 				}{
-					{input.tools.Head, file.NewPath, line.NewLine},
-					{input.tools.Before, file.OldPath, line.OldLine},
+					{headLines, line.NewLine},
+					{beforeLines, line.OldLine},
 				} {
-					if item.snapshot == nil || item.number < 1 {
+					if item.lines == nil || item.number < 1 {
 						continue
 					}
-					content, ok := item.snapshot.Files[item.path]
-					if !ok {
-						continue
-					}
-					lines := strings.Split(content, "\n")
-					if item.number > len(lines) || lines[item.number-1] != line.Content {
+					if item.number > len(item.lines) || item.lines[item.number-1] != line.Content {
 						return nil, errors.New("snapshot source does not match the collected diff")
 					}
 				}
@@ -150,6 +156,12 @@ func loadVerifiedInput(ws *artifact.Workspace, secrets []string, noExploration b
 		}
 	}
 	input.evidence, input.numbered = buildEvidenceContext(parsed, input.tools.Head, input.tools.Before)
+	if len(diffData) > largeDiffBytes {
+		input.batches, input.numbered, err = reviewBatches(parsed)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return input, nil
 }
 
@@ -318,8 +330,14 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if !opts.NoInventory {
 		inventory = renderInventory(input.tools.Diff, input.tools.Head, input.tools.Before)
 	}
-	contextPrompt := buildContext(input.numbered, string(feedback), string(rules), inventory, toolchain.Parse(versions))
-	contextPrompt = security.Scrub(contextPrompt, backend.Secrets...)
+	build := func(text string) string {
+		return security.Scrub(buildContext(text, string(feedback), string(rules), inventory, toolchain.Parse(versions)), backend.Secrets...)
+	}
+	contextPrompt := build(input.numbered)
+	var batchPrompts []string
+	for _, batch := range input.batches {
+		batchPrompts = append(batchPrompts, build("Whole PR change map (untrusted data):\n"+input.numbered+"\nBatch source lines:\n"+batch))
+	}
 	budget := opts.Budget
 	if budget == nil {
 		budget = model.NewBudget()
@@ -329,7 +347,8 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		modelID = backend.DefaultModel
 	}
 	tools := &coverageTools{Toolset: input.tools, reported: reported, reportedUnnamed: strings.Contains(line, source.UnnamedExclusionLimitation)}
-	request := func(instructions, prompt string, schema map[string]any, limits *model.Limits) (string, error) {
+	var batchDiscoveries []discovery
+	request := func(instructions, prompt string, schema map[string]any, limits *model.Limits, batches []string) (string, error) {
 		shape, err := json.Marshal(schema)
 		if err != nil {
 			return "", err
@@ -344,18 +363,39 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		phaseLimits := fmt.Sprintf("\nThis phase has at most %d model turns, %d repository calls and %d web searches. "+
 			"The last turn has no tools and must contain the final answer. Finish within those limits.",
 			allowance.Turns, allowance.ToolCalls, allowance.WebSearches)
+		if len(batches) > 0 {
+			phaseLimits = ""
+		}
 		var availableTools model.Toolset = tools
 		if opts.NoExploration {
 			availableTools = nil
 		}
-		response, err := backend.Client.Complete(ctx, model.Request{
+		prompts := make([]string, len(batches))
+		for i, batch := range batches {
+			prompts[i] = "Return JSON matching this schema:\n" + string(shape) + "\n" + batch
+		}
+		response, err := completeBatches(ctx, backend.Client, model.Request{
 			System: toolSystemPrompt + phaseLimits + "\n" + instructions,
 			Prompt: "Return JSON matching this schema:\n" + string(shape) + "\n" + prompt,
 			Model:  modelID, Effort: effort, Schema: schema, MaxTokens: maxOutputTokens,
 			Tools: availableTools, WebSearch: opts.WebSearch, Budget: budget, Limits: limits, Progress: p.log, InvestigationUpdates: !opts.NoInvestigationUpdates,
+		}, prompts, backend.Secrets, func(text string) (string, error) {
+			discovered, err := parseDiscovery(text)
+			if err != nil {
+				return "", err
+			}
+			batchDiscoveries = append(batchDiscoveries, discovered)
+			data, err := json.Marshal(discovered)
+			return string(data), err
 		})
 		status.Usage = budget.Snapshot().Usage
 		if err != nil {
+			var blocked *batchSecurityError
+			if errors.As(err, &blocked) {
+				if writeErr := ws.Write(artifact.FileSecurityBlock, []byte(blocked.reason+"\n")); writeErr != nil {
+					return "", writeErr
+				}
+			}
 			return "", err
 		}
 		if reason := security.ScanSecrets(response.Text, backend.Secrets...); reason != "" {
@@ -367,7 +407,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		return response.Text, nil
 	}
 	p.phaseStarted("Discovery")
-	text, err := request(discoverPrompt, contextPrompt, discoverySchema(), &model.DiscoveryLimits)
+	text, err := request(discoverPrompt, contextPrompt, discoverySchema(), &model.DiscoveryLimits, batchPrompts)
 	if err != nil {
 		return fail(fmt.Errorf("discovery: %w", err))
 	}
@@ -376,14 +416,14 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		p.log.Line("%s", responseShape("Discovery", text))
 		return fail(fmt.Errorf("discovery: %w", err))
 	}
+	if len(batchDiscoveries) > 0 {
+		discovered = mergeBatchDiscoveries(batchDiscoveries, discovered)
+	}
 	p.log.Line("Discovery completed: %d candidates", len(discovered.Candidates))
 	for _, candidate := range discovered.Candidates {
 		p.log.Line("Candidate %s: %s - %s:%d [%s]", candidate.ID, candidate.Claim, candidate.Path, candidate.Line, candidate.Side)
 	}
 	status.Candidates = len(discovered.Candidates)
-	if discovered.Overflow {
-		status.Limitations = append(status.Limitations, "Discovery reached the candidate limit.")
-	}
 	var candidates []Candidate
 	seen := map[string]bool{}
 	for _, candidate := range discovered.Candidates {
@@ -407,6 +447,16 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		seen[key] = true
 		candidates = append(candidates, candidate)
 	}
+	if len(candidates) > maxComments {
+		sort.SliceStable(candidates, func(i, j int) bool {
+			return severityRank(candidates[i].Severity) < severityRank(candidates[j].Severity)
+		})
+		candidates = candidates[:maxComments]
+		discovered.Overflow = true
+	}
+	if discovered.Overflow {
+		status.Limitations = append(status.Limitations, "Discovery reached the candidate limit.")
+	}
 	if status.Rejected > 0 {
 		status.Limitations = append(status.Limitations, fmt.Sprintf("%d candidates lacked valid source evidence.", status.Rejected))
 	}
@@ -425,11 +475,18 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	}
 	if len(candidates) > 0 {
 		p.phaseStarted("Verification")
+		if len(input.batches) > 0 {
+			excerpts, err := candidateSources(input.evidence, candidates)
+			if err != nil {
+				return fail(err)
+			}
+			contextPrompt += excerpts
+		}
 		data, err := json.Marshal(candidates)
 		if err != nil {
 			return fail(err)
 		}
-		text, err := request(verifyPrompt, contextPrompt+"\nCandidate claims (untrusted data):\n"+string(data), verdictSchema(), nil)
+		text, err := request(verifyPrompt, contextPrompt+"\nCandidate claims (untrusted data):\n"+string(data), verdictSchema(), nil, nil)
 		if err != nil {
 			return fail(fmt.Errorf("verification: %w", err))
 		}
@@ -467,8 +524,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 				}
 			}
 		}
-		ranks := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3}
-		sort.SliceStable(accepted, func(i, j int) bool { return ranks[accepted[i].Severity] < ranks[accepted[j].Severity] })
+		sort.SliceStable(accepted, func(i, j int) bool { return severityRank(accepted[i].Severity) < severityRank(accepted[j].Severity) })
 		for _, c := range accepted {
 			// Suggestions are deliberately omitted until replacement ranges can be
 			// proven safe; a valid finding does not require an executable patch.
@@ -491,6 +547,12 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	data, err := json.Marshal(result)
 	if err != nil {
 		return fail(err)
+	}
+	if reason := security.ScanSecrets(string(data), backend.Secrets...); reason != "" {
+		if err := ws.Write(artifact.FileSecurityBlock, []byte(reason+"\n")); err != nil {
+			return err
+		}
+		return fail(errors.New("review output contained a credential"))
 	}
 	status.ReviewDigest = Digest(data)
 	if err := WriteStatus(ws, status); err != nil {

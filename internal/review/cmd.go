@@ -207,17 +207,32 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 	var tools model.Toolset
 	var coverage *coverageTools
 	inventory := ""
+	var batchDiffs []string
+	promptDiff := string(diffData)
+	parsed, parseErr := diff.Parse(security.ScrubDiff(string(diffData), backend.Secrets...))
+	if len(diffData) > largeDiffBytes {
+		if parseErr != nil {
+			return writeFail("Paco: could not parse the large PR diff: " + scrub(parseErr.Error()))
+		}
+		batchDiffs, promptDiff, err = reviewBatches(parsed)
+		if err != nil {
+			return writeFail("Paco: " + scrub(err.Error()))
+		}
+	}
 	if !opts.NoExploration {
 		snapshot, err := loadSource(ws, backend.Secrets)
 		if err != nil {
 			return writeFail("Paco: " + scrub(err.Error()) + ".")
 		}
 		if snapshot != nil {
-			coverage = &coverageTools{Toolset: snapshot}
+			var repositoryTools model.Toolset = snapshot
+			if len(batchDiffs) > 0 {
+				repositoryTools = &source.Toolset{Head: snapshot, Diff: parsed}
+			}
+			coverage = &coverageTools{Toolset: repositoryTools}
 			tools = coverage
 			p.log.Line("Repository exploration available: %d files at %s", len(snapshot.Files), snapshot.Commit)
-			parsed, err := diff.Parse(security.ScrubDiff(string(diffData), backend.Secrets...))
-			if err == nil {
+			if parseErr == nil {
 				line, reported := excludedLimitation(parsed, snapshot, nil)
 				if line != "" {
 					p.limitations = append(p.limitations, line)
@@ -228,22 +243,36 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 			if !opts.NoInventory {
 				// Single-pass loads only the head snapshot, so the inventory
 				// cannot map deleted lines to before-side declarations.
-				if err == nil {
+				if parseErr == nil {
 					inventory = renderInventory(parsed, snapshot, nil)
 				} else {
-					p.log.Line("Change inventory unavailable: %s", err.Error())
+					p.log.Line("Change inventory unavailable: %s", parseErr.Error())
 				}
 			}
 		} else {
 			p.log.Line("Repository exploration unavailable: no source snapshot; reviewing supplied diff only")
 			p.limitations = append(p.limitations, "Full source unavailable; only supplied diff context was reviewed.")
+			if len(batchDiffs) > 0 {
+				coverage = &coverageTools{Toolset: &source.Toolset{Diff: parsed}}
+				tools = coverage
+			}
 		}
 	}
-	prompt := BuildPrompt(mode, string(diffData), string(feedback), string(reviewRules), inventory, toolchain.Parse(toolchainData))
+	build := func(text string) string {
+		return BuildPrompt(mode, text, string(feedback), string(reviewRules), inventory, toolchain.Parse(toolchainData))
+	}
+	prompt := build(promptDiff)
+	var batchPrompts []string
+	for _, batch := range batchDiffs {
+		batchPrompts = append(batchPrompts, build("Whole PR change map (untrusted data):\n"+promptDiff+"\nBatch source lines:\n"+batch))
+	}
 	instructions := systemPrompt
 	if tools != nil || opts.WebSearch || !opts.NoInvestigationUpdates {
-		instructions = toolSystemPrompt + fmt.Sprintf("\nYou have at most %d repository calls, %d web searches and %d model turns.",
-			model.DefaultLimits.ToolCalls, model.DefaultLimits.WebSearches, model.DefaultLimits.Turns)
+		instructions = toolSystemPrompt
+		if len(batchPrompts) == 0 {
+			instructions += fmt.Sprintf("\nYou have at most %d repository calls, %d web searches and %d model turns.",
+				model.DefaultLimits.ToolCalls, model.DefaultLimits.WebSearches, model.DefaultLimits.Turns)
+		}
 	}
 	modelID := opts.Model
 	if modelID == "" {
@@ -262,8 +291,17 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 		backend.Backend, modelID, effortLabel, schema != nil)
 	p.phaseStarted("Review")
 	startedAt := time.Now()
+	var batchReviews []*Review
+	blockOutput := func(reason string) error {
+		p.log.Line("Security filter tripped: %s; withholding review", reason)
+		if err := ws.Write(artifact.FileSecurityBlock, []byte(reason+"\n")); err != nil {
+			return err
+		}
+		emptyReview, _ := json.Marshal(Review{Summary: "", Comments: []Comment{}})
+		return ws.Write(artifact.FileReview, emptyReview)
+	}
 
-	result, err := backend.Client.Complete(runCtx, model.Request{
+	result, err := completeBatches(runCtx, backend.Client, model.Request{
 		System:               instructions,
 		Prompt:               prompt,
 		Model:                modelID,
@@ -275,6 +313,14 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 		Budget:               opts.Budget,
 		Progress:             p.log,
 		InvestigationUpdates: !opts.NoInvestigationUpdates,
+	}, batchPrompts, backend.Secrets, func(text string) (string, error) {
+		review := ExtractReview(text)
+		if review == nil {
+			return "", errors.New("model output could not be parsed as a review")
+		}
+		batchReviews = append(batchReviews, review)
+		data, err := json.Marshal(review)
+		return string(data), err
 	})
 
 	elapsed := time.Since(startedAt)
@@ -282,7 +328,10 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 	if err != nil {
 		p.log.Line("Model review failed: %s", err.Error())
 		var incomplete *model.IncompleteError
+		var blocked *batchSecurityError
 		switch {
+		case errors.As(err, &blocked):
+			return blockOutput(blocked.reason)
 		case errors.As(err, &incomplete):
 			return writeFail("Paco: " + incomplete.Error() + ".")
 		case errors.Is(err, context.DeadlineExceeded):
@@ -295,12 +344,7 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 
 	rawOutput := result.Text
 	if reason := security.ScanSecrets(rawOutput, backend.Secrets...); reason != "" {
-		p.log.Line("Security filter tripped: %s; withholding review", reason)
-		if err := ws.Write(artifact.FileSecurityBlock, []byte(reason+"\n")); err != nil {
-			return err
-		}
-		emptyReview, _ := json.Marshal(Review{Summary: "", Comments: []Comment{}})
-		return ws.Write(artifact.FileReview, emptyReview)
+		return blockOutput(reason)
 	}
 
 	review := ExtractReview(rawOutput)
@@ -309,7 +353,13 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 		return writeFail("Paco: the model returned output that could not be parsed as a review.")
 	}
 
+	if len(batchReviews) > 0 {
+		review = mergeBatchReviews(batchReviews, review)
+	}
 	normalized := Normalize(review)
+	if len(batchReviews) > 0 && len(review.Comments) > len(normalized.Comments) {
+		p.limitations = append(p.limitations, "Review reached the comment limit.")
+	}
 	// Legacy model output cannot opt itself into verified publication.
 	normalized.Verified = false
 	normalized.SummaryFindings = nil
@@ -322,6 +372,9 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 	data, err := json.Marshal(normalized)
 	if err != nil {
 		return err
+	}
+	if reason := security.ScanSecrets(string(data), backend.Secrets...); reason != "" {
+		return blockOutput(reason)
 	}
 	if err := ws.Write(artifact.FileReview, data); err != nil {
 		return err

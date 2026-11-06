@@ -129,6 +129,35 @@ failure summary. The timeout includes Vertex token acquisition, and each
 OAuth request has its own 30-second timeout. Paco never retries
 automatically.
 
+Diffs over 200,000 bytes use multiple review batches, followed by a pass that
+checks interactions across batches and writes the overall summary. Paco merges
+batch findings in code, removes exact duplicates, and retains up to 30 findings
+or candidates. Normal findings are filtered and ranked by severity before the
+cap. Verified candidates pass evidence validation and deduplication first,
+then severity determines which candidates fit the cap. Candidate overflow
+marks coverage partial. The
+integration pass only adds new findings. Each batch receives
+the whole PR's file and hunk map. Files stay together when they fit within
+160,000 bytes of numbered source; larger files split at hunk boundaries,
+and larger hunks split between source lines. No source lines are discarded.
+Each numbered batch line records whether the diff marks it as having no
+final newline.
+With exploration enabled, `read_diff` can read any hunk from the full diff,
+including when source snapshots are unavailable. Large-review `read_file` and
+`search_code` results encode source lines as `source_json` strings;
+`read_diff` returns JSON line records with a `content` field.
+
+Batches share the normal deadline and call budget. Verified reviews batch
+discovery within its existing allowance, leaving the rest for verification.
+Review depth decreases as the batch count grows. Five verified discovery
+batches initially get two model turns each. If a batch gets just one turn,
+that turn has no tools. The 4 MiB storage limit does not guarantee that every
+diff below it fits the review's time, turn or context limits.
+Batch errors, malformed responses or insufficient budget withhold the review's
+findings. Stored diffs have a separate 4 MiB safety limit. A single source
+line exceeding the batch size, an oversized change map or oversized combined
+batch reports also stops the review with a failure.
+
 Review logs show phases, tool arguments and bounded result summaries, candidate
 decisions, coverage, elapsed time and provider-reported usage. Findings are ready
 after `review`; `post` confirms publication. Heartbeats run every 30 seconds.
@@ -223,8 +252,8 @@ misquoted line keeps its anchor and goes to the verifier without evidence,
 which must then cite the source itself. A verifier decision with invalid
 evidence does not fail the review: an acceptance is treated as
 `insufficient_evidence` and is not published, and a rejection keeps its
-outcome without the citation. Single-pass source tools retain their
-existing text format.
+outcome without the citation. Single-pass reviews of diffs up to 200,000
+bytes keep the existing source-tool text format.
 
 Both passes share the 900-second deadline and total allowance of 24 turns,
 80 repository calls, and six web searches. Discovery gets at most 16 turns,

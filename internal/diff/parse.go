@@ -23,8 +23,8 @@ var hunkHeader = regexp.MustCompile(`^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,(
 // Parse preserves line content verbatim. Incomplete hunks remain usable for
 // legacy diffs, but are explicitly marked rather than claiming full coverage.
 func Parse(text string) (*ParsedDiff, error) {
-	if len(text) > maxDiffBytes {
-		return nil, errors.New("diff exceeds 200000 bytes")
+	if len(text) > MaxBytes {
+		return nil, fmt.Errorf("diff exceeds %d bytes", MaxBytes)
 	}
 	result := &ParsedDiff{Files: []FileDiff{}}
 	var file *FileDiff
@@ -63,7 +63,7 @@ func Parse(text string) (*ParsedDiff, error) {
 					continue
 				}
 				n, err := strconv.Atoi(value)
-				if err != nil || n > int(^uint(0)>>1)-maxDiffBytes {
+				if err != nil || n > int(^uint(0)>>1)-MaxBytes {
 					return nil, errors.New("diff line coordinate overflows")
 				}
 				nums[i] = n
@@ -184,7 +184,7 @@ func Limitations(parsed *ParsedDiff) []string {
 }
 
 func ParseValidLines(r io.Reader) (map[string]map[string]bool, error) {
-	data, err := io.ReadAll(io.LimitReader(r, maxDiffBytes+1))
+	data, err := io.ReadAll(io.LimitReader(r, MaxBytes+1))
 	if err != nil {
 		return nil, err
 	}

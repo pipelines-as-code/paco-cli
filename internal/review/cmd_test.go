@@ -213,6 +213,11 @@ func TestRunModelOutput(t *testing.T) {
 			wantSecurityBlock: true,
 		},
 		{
+			name:              "security block on escaped credential",
+			output:            `{"summary":"\u0074op-secret-value","comments":[]}`,
+			wantSecurityBlock: true,
+		},
+		{
 			name:              "security block on anthropic key",
 			output:            `{"summary":"sk-ant-api03-ABCDEFGHIJ_klmnopqrst-uvw","comments":[]}`,
 			wantSecurityBlock: true,

@@ -104,7 +104,7 @@ that. Use `--web-search=false` if that risk is not acceptable.
 
 ## Output Limits
 
-- PR diff: 200KB max
+- PR diff: 4 MiB max; diffs over 200,000 bytes use bounded review batches
 - Feedback digest: 30KB max
 - Inline comments: 30 max per review
 - Review score rating: clamped to 1-5

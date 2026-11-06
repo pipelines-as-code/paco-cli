@@ -83,9 +83,22 @@ var validSeverities = map[string]bool{
 	"low":      true,
 }
 
-func Normalize(r *Review) *Review {
+func severityRank(severity string) int {
+	switch strings.ToLower(severity) {
+	case "critical":
+		return 0
+	case "high":
+		return 1
+	case "low":
+		return 3
+	default:
+		return 2
+	}
+}
+
+func normalizeComments(input []Comment) []Comment {
 	var comments []Comment
-	for _, c := range r.Comments {
+	for _, c := range input {
 		if c.Path == "" || c.Line == 0 || c.Body == "" {
 			continue
 		}
@@ -96,6 +109,11 @@ func Normalize(r *Review) *Review {
 		c.Severity = sev
 		comments = append(comments, c)
 	}
+	return comments
+}
+
+func Normalize(r *Review) *Review {
+	comments := normalizeComments(r.Comments)
 	if len(comments) > maxComments {
 		comments = comments[:maxComments]
 	}

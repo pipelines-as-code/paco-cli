@@ -42,7 +42,7 @@ func Command() *cobra.Command {
 }
 
 const (
-	maxDiffBytes     = 200000
+	MaxBytes         = 4 << 20
 	maxFeedbackBytes = 30000
 )
 
@@ -124,10 +124,10 @@ func Run(ctx context.Context, opts Options) error {
 		return ws.WriteSkip(fmt.Sprintf("Paco: could not fetch the diff for pull request #%d.", pr))
 	}
 
-	if len(rawDiff) > maxDiffBytes {
+	if len(rawDiff) > MaxBytes {
 		return ws.WriteSkip(fmt.Sprintf(
 			"Paco: PR diff is too large (%d bytes, limit is %d), so review was skipped instead of using a truncated diff.",
-			len(rawDiff), maxDiffBytes,
+			len(rawDiff), MaxBytes,
 		))
 	}
 

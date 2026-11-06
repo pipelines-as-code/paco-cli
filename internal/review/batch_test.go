@@ -434,4 +434,11 @@ func TestVerifiedBatchCapFollowsEvidenceValidation(t *testing.T) {
 	assert.NilError(t, json.Unmarshal(data, &status))
 	assert.Equal(t, status.Rejected, maxComments)
 	assert.Assert(t, strings.Contains(strings.Join(status.Limitations, "\n"), "Discovery reached the candidate limit"))
+	var skipped []string
+	for _, d := range status.Decisions {
+		if d.Outcome == "skipped" {
+			skipped = append(skipped, d.ID)
+		}
+	}
+	assert.Equal(t, fmt.Sprint(skipped), "[b2-30]")
 }

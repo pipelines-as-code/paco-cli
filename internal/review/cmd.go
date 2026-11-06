@@ -355,6 +355,9 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 
 	if len(batchReviews) > 0 {
 		review = mergeBatchReviews(batchReviews, review)
+		if parseErr == nil {
+			review.Comments = anchoredComments(review.Comments, parsed)
+		}
 	}
 	normalized := Normalize(review)
 	if len(batchReviews) > 0 && len(review.Comments) > len(normalized.Comments) {

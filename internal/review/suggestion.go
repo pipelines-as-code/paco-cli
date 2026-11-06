@@ -1,12 +1,27 @@
 package review
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/pipelines-as-code/paco-cli/internal/diff"
 )
 
 const suggestionFence = "```suggestion"
+
+// anchoredComments drops comments GitHub cannot attach to the diff, so they do
+// not take slots in the comment cap that publishable comments could use.
+func anchoredComments(comments []Comment, parsed *diff.ParsedDiff) []Comment {
+	valid := diff.ValidLines(parsed)
+	kept := comments[:0]
+	for _, c := range comments {
+		if !valid[c.Path][strconv.Itoa(c.Line)] {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept
+}
 
 // guardSuggestions removes suggestion blocks that GitHub would apply badly:
 // malformed fences, no-op replacements, and multi-line replacements that

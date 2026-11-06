@@ -425,7 +425,7 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	}
 	status.Candidates = len(discovered.Candidates)
 	var candidates []Candidate
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	for _, candidate := range discovered.Candidates {
 		if err := input.evidence.validateCandidate(candidate); err != nil {
 			if !errors.Is(err, errQuoteMismatch) {
@@ -439,12 +439,17 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 			candidate.Evidence = []Evidence{}
 		}
 		key := candidate.Path + "\x00" + candidate.Side + "\x00" + candidate.Claim + "\x00" + candidate.Trigger + "\x00" + candidate.Impact
-		if seen[key] {
+		if index, ok := seen[key]; ok {
 			status.Duplicates++
 			status.Decisions = append(status.Decisions, Disposition{candidate.ID, "duplicate", "Identical claim, trigger and impact."})
+			// Keep the most severe copy so the candidate cap cannot drop a
+			// critical finding in favour of a mild duplicate from another batch.
+			if severityRank(candidate.Severity) < severityRank(candidates[index].Severity) {
+				candidates[index] = candidate
+			}
 			continue
 		}
-		seen[key] = true
+		seen[key] = len(candidates)
 		candidates = append(candidates, candidate)
 	}
 	if len(candidates) > maxComments {

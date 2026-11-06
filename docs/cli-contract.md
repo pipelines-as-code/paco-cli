@@ -137,7 +137,8 @@ path and line do not appear in the diff are dropped, because GitHub cannot
 attach them, and the rest are ranked by severity before the cap.
 Verified candidates pass evidence validation and deduplication first,
 then severity determines which candidates fit the cap. Candidate overflow
-marks coverage partial. The
+marks coverage partial, and each candidate the cap drops keeps a `skipped`
+outcome in the published list of unpublished candidates. The
 integration pass only adds new findings. Each batch receives
 the whole PR's file and hunk map. Files stay together when they fit within
 160,000 bytes of numbered source; larger files split at hunk boundaries,

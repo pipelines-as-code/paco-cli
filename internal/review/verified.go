@@ -458,6 +458,11 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 		sort.SliceStable(candidates, func(i, j int) bool {
 			return severityRank(candidates[i].Severity) < severityRank(candidates[j].Severity)
 		})
+		// Every discovered candidate keeps an outcome, so the published list of
+		// unpublished candidates can explain the ones the limit dropped.
+		for _, candidate := range candidates[maxComments:] {
+			status.Decisions = append(status.Decisions, Disposition{candidate.ID, "skipped", "Candidate limit reached."})
+		}
 		candidates = candidates[:maxComments]
 		discovered.Overflow = true
 	}

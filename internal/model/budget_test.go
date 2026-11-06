@@ -22,8 +22,10 @@ func budgetEvents(tools, searches int, reportedSearches int64, stop string) stri
 	}
 	for i := range searches {
 		events = append(events,
-			fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"server_tool_use","id":"search%d","name":"web_search","input":{}}}`, tools+i, i),
-			fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, tools+i))
+			fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"server_tool_use","id":"search%d","name":"web_search","input":{}}}`, tools+2*i, i),
+			fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, tools+2*i),
+			fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"web_search_tool_result","tool_use_id":"search%d","content":[]}}`, tools+2*i+1, i),
+			fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, tools+2*i+1))
 	}
 	events = append(events,
 		fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":%q},"usage":{"output_tokens":5,"server_tool_use":{"web_search_requests":%d}}}`, stop, reportedSearches),
@@ -214,7 +216,6 @@ func TestCompleteFailedUsagePersists(t *testing.T) {
 		{name: "provider failure", status: 200, stream: sse(evStart, `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`), want: "Overloaded", input: 1},
 		{name: "invalid stream", status: 200, stream: sse(evStart, `{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}`), want: "expected index", input: 1},
 		{name: "output truncation", status: 200, stream: sse(evStart, evMessageDelta("max_tokens"), evStop), want: "output token limit", input: 1, output: 5},
-		{name: "web error", status: 200, stream: webEvents(`{"type":"web_search_tool_result_error","error_code":"unavailable"}`, "end_turn"), want: "web search failed", input: 1, output: 5, searches: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

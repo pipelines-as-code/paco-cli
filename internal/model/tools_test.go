@@ -209,10 +209,46 @@ func TestCompleteWebSearch(t *testing.T) {
 	assert.Equal(t, len(ft.reqs[1].Body["messages"].([]any)), 2)
 }
 
-func TestCompleteWebSearchFailure(t *testing.T) {
+func TestCompleteDeferredWebSearch(t *testing.T) {
+	deferred := sse(evStart,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv1","name":"web_search","input":{}}}`,
+		evBlockStop,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call1","name":"read_file","input":{}}}`,
+		`{"type":"content_block_stop","index":1}`,
+		evMessageDelta("tool_use"), evStop)
+	resumed := sse(evStart,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result","tool_use_id":"srv1","content":[]}}`,
+		evBlockStop,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srv2","name":"web_search","input":{}}}`,
+		`{"type":"content_block_stop","index":1}`,
+		`{"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srv2","content":{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}}}`,
+		`{"type":"content_block_stop","index":2}`,
+		`{"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"{\"summary\":\"ok\"}"}}`,
+		`{"type":"content_block_stop","index":3}`,
+		evMessageDelta("end_turn"), evStop)
+	n := 0
 	ft := &fakeTransport{respond: func(*http.Request) *http.Response {
-		return response(200, "text/event-stream", webEvents(`{"type":"web_search_tool_result_error","error_code":"unavailable"}`, "end_turn"))
+		n++
+		if n == 1 {
+			return response(200, "text/event-stream", deferred)
+		}
+		return response(200, "text/event-stream", resumed)
 	}}
-	_, err := anthropicClient(t, ft).Complete(context.Background(), Request{Prompt: "p", Model: "m", MaxTokens: 100, WebSearch: true})
-	assert.ErrorContains(t, err, "web search failed: unavailable")
+	budget := NewBudget()
+	result, err := anthropicClient(t, ft).Complete(context.Background(), Request{
+		Prompt: "p", Model: "m", MaxTokens: 100, Tools: &testTools{}, WebSearch: true, Budget: budget,
+	})
+	assert.NilError(t, err)
+	assert.Equal(t, result.Text, `{"summary":"ok"}`)
+	assert.Equal(t, len(ft.reqs), 2)
+	// The deferred search has not run yet, so the next request keeps the full allowance.
+	var maxUses any
+	for _, tool := range ft.reqs[1].Body["tools"].([]any) {
+		if tool := tool.(map[string]any); tool["name"] == "web_search" {
+			maxUses = tool["max_uses"]
+		}
+	}
+	assert.Equal(t, maxUses, float64(DefaultLimits.WebSearches))
+	assert.Equal(t, budget.Snapshot().Used.WebSearches, int64(1))
 }

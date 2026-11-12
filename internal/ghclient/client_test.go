@@ -3,6 +3,7 @@ package ghclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -514,4 +515,34 @@ func TestParseCommentID(t *testing.T) {
 			assert.Equal(t, got, tt.want)
 		})
 	}
+}
+
+func TestSubdirNames(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, r.URL.Path, "/repos/o/r/contents/.tekton/ai/skills")
+		assert.Equal(t, r.URL.Query().Get("ref"), "def456")
+		_, _ = io.WriteString(w, `[{"type":"dir","name":"beta"},{"type":"file","name":"README.md"},{"type":"dir","name":"alpha"}]`)
+	}))
+	defer srv.Close()
+
+	names, err := testClient(t, srv, "/").SubdirNames(context.Background(), Repo{"o", "r"}, ".tekton/ai/skills", "def456")
+	assert.NilError(t, err)
+	assert.DeepEqual(t, names, []string{"alpha", "beta"})
+}
+
+func TestIsNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+	}))
+	defer srv.Close()
+	client := testClient(t, srv, "/")
+
+	_, err := client.SubdirNames(context.Background(), Repo{"o", "r"}, ".tekton/ai/skills", "main")
+	assert.Assert(t, IsNotFound(err), err)
+
+	_, _, err = client.PullRequestRefs(context.Background(), Repo{"o", "r"}, 1)
+	assert.Assert(t, IsNotFound(err), err)
+	assert.Assert(t, !IsNotFound(nil))
+	assert.Assert(t, !IsNotFound(errors.New("not found")))
 }

@@ -37,6 +37,7 @@ func TestToolLogging(t *testing.T) {
 		{name: "file listing", tool: "list_files", input: `{"contains":"pkg"}`, output: "head snapshot; context\npkg/a.go\npkg/b.go\n", start: `Listing files [head] path filter "pkg"`, end: "2 files returned"},
 		{name: "diff defaults", tool: "read_diff", input: `{"path":"a.go"}`, output: "Hunk 1/1; complete: false\n{\"content\":\"private source\"}\n", start: "Reading diff a.go hunk 1 offset 1", end: "1 lines returned; incomplete hunk context"},
 		{name: "diff slice", tool: "read_diff", input: `{"path":"a.go","hunk":2,"offset":8}`, output: "", start: "Reading diff a.go hunk 2 offset 8", end: "0 lines returned"},
+		{name: "skill", tool: "load_skill", input: `{"name":"diagnose"}`, output: "Skill \"diagnose\": text", start: `Loading skill "diagnose"`, end: "skill loaded"},
 		{name: "malformed", tool: "read_file", input: `{`, start: "Calling read_file: invalid arguments", end: "failed", err: errors.New("bad\ninput")},
 	}
 	for _, tt := range tests {

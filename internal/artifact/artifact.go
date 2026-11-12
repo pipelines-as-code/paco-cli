@@ -20,6 +20,7 @@ const (
 	FileStatus           = ".paco-status.json"
 	FileReviewRules      = ".tekton/ai/REVIEW.md"
 	FileToolchains       = ".toolchain-versions"
+	FileSkills           = ".paco-skills.json"
 	FileSource           = ".paco-source.json"
 	FileClaim            = ".paco-claim.json"
 )

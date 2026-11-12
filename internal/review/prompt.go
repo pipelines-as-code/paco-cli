@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/pipelines-as-code/paco-cli/internal/model"
+	"github.com/pipelines-as-code/paco-cli/internal/skill"
 	"github.com/pipelines-as-code/paco-cli/internal/source"
 	"github.com/pipelines-as-code/paco-cli/internal/toolchain"
 )
@@ -25,12 +26,13 @@ var promptInventory string
 func PromptDigest() string {
 	return Digest([]byte(promptHeader + promptModeReview + promptModeSummary +
 		systemPrompt + toolSystemPrompt + discoverPrompt + verifyPrompt + promptInventory +
+		skillBeginMarker + skillEndMarker + skillRequestedIntro + skillCatalogIntro + skill.ToolDescription +
 		batchInstructions + integrationInstructions + model.InvestigationInstructions + model.ProgressToolDescription))
 }
 
 // BuildPrompt assembles the single-pass prompt. inventory is the rendered
 // change inventory, or empty when none is available.
-func BuildPrompt(mode, diff, feedback, reviewRules, inventory string, toolchains []toolchain.Version) string {
+func BuildPrompt(mode, diff, feedback, reviewRules, skills, inventory string, toolchains []toolchain.Version) string {
 	prompt := promptHeader
 
 	if mode == "summary" {
@@ -38,7 +40,7 @@ func BuildPrompt(mode, diff, feedback, reviewRules, inventory string, toolchains
 	} else {
 		prompt += "\n" + promptModeReview
 	}
-	return prompt + buildContext(diff, feedback, reviewRules, inventory, toolchains)
+	return prompt + buildContext(diff, feedback, reviewRules, skills, inventory, toolchains)
 }
 
 func renderInventory(d *source.Diff, head, before *source.Snapshot) string {
@@ -51,7 +53,7 @@ func renderInventory(d *source.Diff, head, before *source.Snapshot) string {
 	return inv.Render()
 }
 
-func buildContext(diff, feedback, reviewRules, inventory string, toolchains []toolchain.Version) string {
+func buildContext(diff, feedback, reviewRules, skills, inventory string, toolchains []toolchain.Version) string {
 	prompt := ""
 	if feedback != "" {
 		prompt += `
@@ -97,6 +99,10 @@ concrete bugs, security issues, and missed edge cases.
 --- BEGIN TRUSTED REVIEW RULES ---
 ` + reviewRules + `
 --- END TRUSTED REVIEW RULES ---`
+	}
+
+	if skills != "" {
+		prompt += skills
 	}
 
 	if inventory != "" {

@@ -14,7 +14,8 @@ paco post   --repo owner/repo --pr 42 --workspace /workspace/source
 ```
 
 - `paco diff` fetches the diff, existing feedback, base-branch review
-  rules and toolchain versions, and a source snapshot of the PR head.
+  rules, toolchain versions and skills, and a source snapshot of the PR
+  head.
 - `paco review` builds the prompt, calls Claude, and normalizes the
   findings.
 - `paco post` updates the summary comment, labels, and inline review.
@@ -82,8 +83,14 @@ so you get fixes without editing your copy.
    [`examples/review-rules.md`](examples/review-rules.md)). Paco reads
    them from the base branch, so a PR cannot weaken its own rules.
 
+4. Optionally add skills under `.tekton/ai/skills/<name>/SKILL.md` (see
+   [Skills](docs/skills.md) and
+   [`examples/skills`](examples/skills)). Paco reads them from the base
+   branch only.
+
 Paco reviews PRs opened or reopened against `main`. Comment
-`/paco review` for a new review or `/paco summary` for a summary only.
+`/paco review` for a new review or `/paco summary` for a summary only. Add `skill:<name>` (up to 3) to
+apply a skill, for example `/paco review skill:diagnose-pipelinerun-failure`.
 
 The annotation URL and the `image` parameter both follow `main`. To pin
 a version, replace `main` in the URL with a release tag and set `image`
@@ -107,6 +114,7 @@ certificates.
 ## Documentation
 
 - [CLI contract](docs/cli-contract.md): flags, environment, artifacts, exit codes
+- [Skills](docs/skills.md): project investigation guides and a failure-diagnosis walkthrough
 - [Security design](docs/security.md): trust boundaries, redaction, scanning
 - [Development guide](docs/development.md): build, test, release
 - [Design issue](https://github.com/tektoncd/pipelines-as-code/issues/2865)

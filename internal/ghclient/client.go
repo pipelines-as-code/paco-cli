@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -284,6 +285,28 @@ func (c *Client) RootFileNames(ctx context.Context, r Repo, ref string) ([]strin
 		}
 	}
 	return names, nil
+}
+
+// SubdirNames lists the directory entries at path for ref, sorted by name.
+func (c *Client) SubdirNames(ctx context.Context, r Repo, path, ref string) ([]string, error) {
+	_, dir, _, err := c.rest.Repositories.GetContents(ctx, r.Owner, r.Name, path, &github.RepositoryContentGetOptions{Ref: ref})
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range dir {
+		if e.GetType() == "dir" {
+			names = append(names, e.GetName())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// IsNotFound reports whether err is a GitHub 404 response.
+func IsNotFound(err error) bool {
+	var response *github.ErrorResponse
+	return errors.As(err, &response) && response.Response != nil && response.Response.StatusCode == http.StatusNotFound
 }
 
 // Review is a submitted pull request review.

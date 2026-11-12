@@ -192,7 +192,7 @@ writes `findings.json`.
 
 The adapter differs from a production review in a few ways. It rebuilds
 the before snapshot by reverse-applying the diff to the head checkout. It
-does not load `.tekton/ai/REVIEW.md` or toolchain files. It anchors verified
+does not load `.tekton/ai/REVIEW.md`, toolchain files or skills. It anchors verified
 findings on deleted lines to the nearest new-side line in the same hunk.
 A failed review exits non-zero so ReviewBench retries it. A skipped or
 security-blocked review writes no findings.

@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 
 	"github.com/pipelines-as-code/paco-cli/internal/artifact"
 	"github.com/pipelines-as-code/paco-cli/internal/ghclient"
 	"github.com/pipelines-as-code/paco-cli/internal/security"
+	"github.com/pipelines-as-code/paco-cli/internal/skill"
 	"github.com/pipelines-as-code/paco-cli/internal/source"
 	"github.com/pipelines-as-code/paco-cli/internal/status"
 	"github.com/pipelines-as-code/paco-cli/internal/toolchain"
@@ -64,7 +66,7 @@ func Run(ctx context.Context, opts Options) error {
 	for _, name := range []string{
 		artifact.FileSource, artifact.FileSourceBefore, artifact.FileInputManifest, artifact.FileExistingFeedbackJSON,
 		artifact.FileDiff, artifact.FileValidLines, artifact.FileExistingInline, artifact.FileExistingFeedback,
-		artifact.FileHeadSHA, artifact.FileReviewRules, artifact.FileToolchains, artifact.FileError,
+		artifact.FileHeadSHA, artifact.FileReviewRules, artifact.FileToolchains, artifact.FileSkills, artifact.FileError,
 		artifact.FileReview, artifact.FileMode, artifact.FileFailed, artifact.FileSecurityBlock, artifact.FileStatus,
 		artifact.FileClaim,
 	} {
@@ -187,6 +189,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	fetchReviewRules(ctx, gh, repo, baseRef, ws)
 	fetchToolchains(ctx, gh, repo, baseRef, ws)
+	fetchSkills(ctx, gh, repo, baseRef, ws)
 
 	head, headError := fetchSource(ctx, gh, repo, refs.HeadSHA)
 	if headError != nil && refs.HeadRepo != "" && refs.HeadRepo != repo.String() {
@@ -334,5 +337,72 @@ func fetchToolchains(ctx context.Context, gh *ghclient.Client, repo ghclient.Rep
 	}
 	for _, v := range versions {
 		fmt.Printf("Detected %s %s from %s\n", v.Language, v.Version, v.Source)
+	}
+}
+
+// fetchSkills collects the skills declared on the target branch. Invalid
+// skills are recorded in the artifact instead of failing the run.
+func fetchSkills(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, baseBranch string, ws *artifact.Workspace) {
+	catalog := skill.Catalog{Version: 1, Ref: baseBranch, Status: skill.StatusAvailable, Skills: []skill.Skill{}, Invalid: []skill.Problem{}}
+	names, err := gh.SubdirNames(ctx, repo, skill.Dir, baseBranch)
+	switch {
+	case ghclient.IsNotFound(err):
+		catalog.Status = skill.StatusAbsent
+	case err != nil:
+		catalog.Status = skill.StatusUnavailable
+		catalog.Reason = security.Scrub(err.Error(), gh.Token())
+		fmt.Printf("Warning: could not list %s at %s: %s\n", skill.Dir, baseBranch, catalog.Reason)
+	default:
+		if len(names) > skill.MaxSkills {
+			for _, name := range names[skill.MaxSkills:] {
+				catalog.Invalid = append(catalog.Invalid, skill.Problem{Name: name, Reason: "too many skills"})
+			}
+			names = names[:skill.MaxSkills]
+		}
+		for _, name := range names {
+			if err := skill.ValidName(name); err != nil {
+				catalog.Invalid = append(catalog.Invalid, skill.Problem{Name: name, Reason: err.Error()})
+				continue
+			}
+			content, err := gh.FileContent(ctx, repo, path.Join(skill.Dir, name, skill.FileName), baseBranch)
+			if err != nil {
+				catalog.Invalid = append(catalog.Invalid, skill.Problem{Name: name, Reason: security.Scrub(err.Error(), gh.Token())})
+				continue
+			}
+			parsed, err := skill.Parse(name, content)
+			if err != nil {
+				catalog.Invalid = append(catalog.Invalid, skill.Problem{Name: name, Reason: err.Error()})
+				continue
+			}
+			parsed.Description = security.Scrub(parsed.Description, gh.Token())
+			parsed.Body = security.Scrub(parsed.Body, gh.Token())
+			catalog.Skills = append(catalog.Skills, parsed)
+		}
+	}
+	for i, problem := range catalog.Invalid {
+		catalog.Invalid[i] = skill.Problem{
+			Name:   security.Scrub(problem.Name, gh.Token()),
+			Reason: security.Scrub(problem.Reason, gh.Token()),
+		}
+	}
+	for _, problem := range catalog.Invalid {
+		fmt.Printf("Skipping invalid skill %s: %s\n", problem.Name, problem.Reason)
+	}
+	encoded, err := json.Marshal(catalog)
+	if err != nil {
+		fmt.Printf("Warning: could not encode skills: %v\n", err)
+		return
+	}
+	if err := ws.Write(artifact.FileSkills, encoded); err != nil {
+		fmt.Printf("Warning: could not write skills: %v\n", err)
+		return
+	}
+	switch catalog.Status {
+	case skill.StatusAbsent:
+		fmt.Printf("No skills directory found at %s:%s, skipping\n", baseBranch, skill.Dir)
+	case skill.StatusUnavailable:
+		fmt.Printf("Skills unavailable at %s, continuing without skills\n", baseBranch)
+	default:
+		fmt.Printf("Fetched %d skills from %s\n", len(catalog.Skills), baseBranch)
 	}
 }

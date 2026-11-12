@@ -226,13 +226,14 @@ func buildEvidenceContext(parsed *source.Diff, head, before *source.Snapshot) (e
 func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, backend *model.Resolved, effort string) error {
 	p := opts.progress
 	status := &VerificationStatus{Version: 1, State: "failed", Limitations: []string{}, Decisions: []Disposition{}}
+	summary := "Paco could not complete verification. No findings were published."
 	fail := func(cause error) error {
 		status.FailureReason = scrubber(backend.Secrets)(cause.Error())
 		p.log.Line("Verified review failed: %s", status.FailureReason)
 		p.state = "failed"
 		p.accepted, p.rejected, p.duplicates = 0, status.Rejected, status.Duplicates
 		p.limitations = append([]string(nil), status.Limitations...)
-		output := Review{Verified: status.HeadSHA != "", Summary: "Paco could not complete verification. No findings were published.", Comments: []Comment{}}
+		output := Review{Verified: status.HeadSHA != "", Summary: summary, Comments: []Comment{}}
 		data, err := json.Marshal(output)
 		if err != nil {
 			return err
@@ -249,6 +250,10 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 			}
 		}
 		return ws.Write(artifact.FileReview, data)
+	}
+	failSkill := func(cause error) error {
+		summary = "Paco: " + scrubber(backend.Secrets)(cause.Error()) + "."
+		return fail(cause)
 	}
 	input, err := loadVerifiedInput(ws, backend.Secrets, opts.NoExploration)
 	if err != nil {
@@ -326,12 +331,24 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if err != nil {
 		return fail(err)
 	}
+	catalog, err := loadSkills(ws, backend.Secrets)
+	if err != nil {
+		return failSkill(err)
+	}
+	selection, err := selectSkills(catalog, opts.requestedSkills, !opts.NoExploration)
+	if err != nil {
+		return failSkill(err)
+	}
+	if len(catalog.Skills) > 0 && opts.NoExploration {
+		p.log.Line("Skill catalog not offered: repository tools disabled")
+	}
+	skillPrompt := renderSkills(selection.requested, selection.catalog)
 	inventory := ""
 	if !opts.NoInventory {
 		inventory = renderInventory(input.tools.Diff, input.tools.Head, input.tools.Before)
 	}
 	build := func(text string) string {
-		return security.Scrub(buildContext(text, string(feedback), string(rules), inventory, toolchain.Parse(versions)), backend.Secrets...)
+		return security.Scrub(buildContext(text, string(feedback), string(rules), skillPrompt, inventory, toolchain.Parse(versions)), backend.Secrets...)
 	}
 	contextPrompt := build(input.numbered)
 	var batchPrompts []string
@@ -346,7 +363,8 @@ func runVerified(ctx context.Context, ws *artifact.Workspace, opts Options, back
 	if modelID == "" {
 		modelID = backend.DefaultModel
 	}
-	tools := &coverageTools{Toolset: input.tools, reported: reported, reportedUnnamed: strings.Contains(line, source.UnnamedExclusionLimitation)}
+	repositoryTools := joinedTools{input.tools, selection.tools}
+	tools := &coverageTools{Toolset: repositoryTools, reported: reported, reportedUnnamed: strings.Contains(line, source.UnnamedExclusionLimitation)}
 	var batchDiscoveries []discovery
 	request := func(instructions, prompt string, schema map[string]any, limits *model.Limits, batches []string) (string, error) {
 		shape, err := json.Marshal(schema)

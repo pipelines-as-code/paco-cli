@@ -27,6 +27,7 @@ func TestCollectionClearsReusedWorkspace(t *testing.T) {
 			replaced := []string{
 				artifact.FileDiff, artifact.FileValidLines, artifact.FileExistingInline, artifact.FileExistingFeedback,
 				artifact.FileInputManifest, artifact.FileExistingFeedbackJSON, artifact.FileHeadSHA, artifact.FileError,
+				artifact.FileSkills,
 			}
 			for _, names := range [][]string{removed, replaced, {"unrelated.txt"}} {
 				for _, name := range names {

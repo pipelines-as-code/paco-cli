@@ -44,6 +44,7 @@ A missing token or invalid URL is reported as a skip (`.paco-error`).
 | `.paco-error` | Skip reason (written on early exit) |
 | `.tekton/ai/REVIEW.md` | Repository review rules from base branch (if present) |
 | `.toolchain-versions` | Language versions declared on the base branch (if any), one `language<TAB>version<TAB>source` line each |
+| `.paco-skills.json` | Skill catalog read from the base branch: status, valid skills and invalid entries with reasons |
 | `.paco-source.json` | Redacted text-file snapshot pinned to `.head_sha`, for read-only exploration |
 | `.paco-source-before.json` | Optional comparison-side source snapshot |
 | `.paco-input.json` | Versioned PR/comparison identities, diff digest, and context availability |
@@ -79,6 +80,29 @@ files present there. The first file declaring a language wins:
 version ranges and version-file changes in the diff into account. It
 does not treat the model's training data as proof that newer syntax or
 APIs are invalid.
+
+### Skills
+
+`paco diff` lists `.tekton/ai/skills/` on the target base revision and
+reads `<name>/SKILL.md` from each subdirectory. See [Skills](skills.md)
+for the file format. A skill is invalid, and recorded with its reason
+instead of failing `diff`, when:
+
+- the directory name is not lowercase letters, digits and single hyphens
+  (64 bytes max)
+- the file is over 12 KiB, not UTF-8, or holds a NUL byte or a PEM
+  private key
+- the frontmatter is missing or unclosed, lacks `name` or `description`,
+  repeats a key, uses a multi-line value, or declares a `name` that
+  differs from the directory
+- the description is over 1,024 bytes or has control characters
+- the body is empty
+
+Only the first 20 directories (sorted by name) are read; the rest are
+recorded as invalid. A missing directory writes status `absent`, and a
+listing error writes `unavailable` with a scrubbed reason. In both cases
+`diff` continues. Skill text is redacted for the GitHub token. The
+artifact is deleted before each `diff` run.
 
 ### Exit Codes
 
@@ -225,6 +249,25 @@ cost extra. Claude is told to search only public package names and
 versions and to cite URLs for findings that rely on web results. Search
 errors fail the review.
 
+### Skills
+
+Names requested with `skill:<name>` have their full text added to the
+prompt, between `BEGIN TRUSTED SKILL` and `END TRUSTED SKILL` markers.
+With repository tools enabled, the other valid skills are offered as a
+catalog of names and descriptions, and Claude can fetch one body with
+`load_skill`. `--no-exploration` removes the catalog, so only requested
+skills are used. Skill text guides the investigation and cannot change
+the response format. Both single-pass and verified reviews support
+skills; a `load_skill` call counts toward the repository tool budget.
+
+An invalid trigger fails the review before any model call: a malformed
+name, or more than 3 distinct names. So does a requested skill that is
+missing, invalid, or unavailable. The failure summary reports the cause;
+a missing name also lists the available skills when they are known, while
+an invalid or unavailable skill and a malformed trigger state what was
+wrong. Invalid skills nobody requested are only logged by `diff`. A
+missing `.paco-skills.json` (an older `diff`) is treated as unavailable.
+
 ### Verified Findings
 
 `--verify-findings` selects discovery followed by a fresh verification
@@ -315,11 +358,14 @@ The backend is picked from the environment:
 Other variables:
 
 - `TRIGGER_COMMENT`: trigger comment text. `/paco summary` selects summary mode.
+  `skill:<name>` words on the first line request [skills](skills.md)
+  (at most 3 distinct names).
 
 ### Artifacts Read
 
 - `.pr.diff`, `.paco-error`, `.existing-feedback.txt`, `.tekton/ai/REVIEW.md`, `.toolchain-versions`
 - `.paco-source.json`, `.head_sha` when repository exploration is enabled
+- `.paco-skills.json`; when absent, no skills are available
 
 ### Artifacts Written
 

@@ -12,7 +12,8 @@
 # Triggers:
 #   - Automatically when a pull request targeting "main" is opened or
 #     reopened.
-#   - On demand with a "/paco review" or "/paco summary" PR comment.
+#   - On demand with a "/paco review" or "/paco summary" PR comment, plus
+#     "skill:<name>" to request a skill from .tekton/ai/skills.
 #
 # Model credentials (create one of these in the namespace of your
 # Repository CR):
@@ -39,7 +40,7 @@ metadata:
     pipelinesascode.tekton.dev/pipeline: "https://raw.githubusercontent.com/pipelines-as-code/paco-cli/main/tekton/paco.pipeline.yaml"
     pipelinesascode.tekton.dev/on-cel-expression: |
       event == "pull_request" && target_branch == "main" && (body.action == "opened" || body.action == "reopened")
-    pipelinesascode.tekton.dev/on-comment: "^/paco[[:space:]]+(review|summary)[[:space:]]*$"
+    pipelinesascode.tekton.dev/on-comment: "^/paco[[:space:]]+(review|summary)([[:space:]]+skill:[a-z0-9-]+)*[[:space:]]*$"
     pipelinesascode.tekton.dev/max-keep-runs: "2"
     pipelinesascode.tekton.dev/cancel-in-progress: "true"
 spec:

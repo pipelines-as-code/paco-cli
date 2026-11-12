@@ -15,6 +15,18 @@ the base branch only, so a PR cannot change them. Both `diff` and
 that look like credentials. `diff` deletes these files from earlier
 runs before fetching the current base branch.
 
+Skills (`.tekton/ai/skills/<name>/SKILL.md`) are trusted project
+guidance, so they come from the target base revision only. The PR head is
+never a skill source: a PR cannot add, change or remove a skill it is
+reviewed with, and a head copy of a skill file is untrusted source like
+any other. The trigger comment only selects names; it cannot supply
+text. Trust therefore equals the ability to push to the target branch.
+`diff` validates and bounds each skill (12 KiB, no private keys, name
+tied to its directory) and `review` re-validates the stored catalog.
+Skill text is scrubbed for known credentials before it reaches the model.
+Skills cannot run code or add tools, and they cannot override the
+response schema, but a skill can steer what the model investigates.
+
 Model output is untrusted and is secret-scanned before any GitHub write.
 
 The source snapshots and web results are untrusted too. The model reads
@@ -90,7 +102,7 @@ Paco runs no subprocesses. It calls two HTTPS APIs directly:
     credentials, so the environment cannot redirect review content.
   - Requests are not retried automatically, and the same redirect
     rules apply.
-  - Only read-only snapshot tools and basic web search are exposed.
+  - Only read-only snapshot tools, `load_skill` and basic web search are exposed.
     Shells, code execution, dynamic filtering, and extended thinking are
     disabled.
 

@@ -121,6 +121,7 @@ func (l *Logger) ToolStart(name string, input json.RawMessage) {
 		Contains string `json:"contains"`
 		Hunk     *int   `json:"hunk"`
 		Offset   *int   `json:"offset"`
+		Name     string `json:"name"`
 	}
 	if len(input) > 4096 || json.Unmarshal(input, &a) != nil {
 		l.Line("Calling %s: invalid arguments", name)
@@ -136,6 +137,8 @@ func (l *Logger) ToolStart(name string, input json.RawMessage) {
 		l.Line("Searching %q [%s] path filter %q", a.Query, a.Revision, a.Filter)
 	case "list_files":
 		l.Line("Listing files [%s] path filter %q", a.Revision, a.Contains)
+	case "load_skill":
+		l.Line("Loading skill %q", a.Name)
 	case "read_diff":
 		hunk, offset := 1, 1
 		if a.Hunk != nil {
@@ -158,6 +161,10 @@ var (
 func (l *Logger) ToolEnd(name, output string, err error, elapsed time.Duration) {
 	if err != nil {
 		l.Line("%s failed (%s): %s", name, elapsed.Round(time.Millisecond).String(), err.Error())
+		return
+	}
+	if name == "load_skill" {
+		l.Line("%s completed (%s): skill loaded", name, elapsed.Round(time.Millisecond).String())
 		return
 	}
 	count := 0

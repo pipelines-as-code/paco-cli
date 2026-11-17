@@ -142,6 +142,30 @@ func TestCollectSkillsLimits(t *testing.T) {
 	assert.Equal(t, invalid["skill-21"], "too many skills")
 }
 
+// JSON escapes < as \u003c, so full skills of such text grow sixfold in
+// the catalog; review must still be able to read it.
+func TestCollectSkillsLargestCatalogDecodes(t *testing.T) {
+	names := make([]string, 0, skill.MaxSkills)
+	files := map[string]string{}
+	for i := range skill.MaxSkills {
+		name := fmt.Sprintf("skill-%02d", i)
+		names = append(names, name)
+		files[name] = skillFile(name, strings.Repeat("<", skill.MaxDescriptionBytes), strings.Repeat("<", skill.MaxFileBytes-skill.MaxDescriptionBytes-100))
+	}
+	f, c := newFakeGitHub(t)
+	happyPath(f, simpleDiff)
+	contextRefs(f, simpleDiff)
+	serveSkills(t, f, "def456", names, files)
+
+	ws := runCollection(t, f, c)
+	data, err := ws.Read(artifact.FileSkills)
+	assert.NilError(t, err)
+	assert.Assert(t, len(data) > 1<<20, len(data))
+	catalog, err := skill.Decode(data)
+	assert.NilError(t, err)
+	assert.Equal(t, len(catalog.Skills), skill.MaxSkills)
+}
+
 func TestCollectSkillsReportsMissingFile(t *testing.T) {
 	f, c := newFakeGitHub(t)
 	happyPath(f, simpleDiff)

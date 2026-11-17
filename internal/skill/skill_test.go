@@ -150,7 +150,7 @@ func TestDecode(t *testing.T) {
 		{name: "not json", data: "{", wantErr: "invalid skill catalog"},
 		{name: "wrong version", data: `{"version":2,"status":"available","skills":[]}`, wantErr: "unsupported skill catalog version"},
 		{name: "invalid status", data: `{"version":1,"status":"unknown","skills":[]}`, wantErr: "invalid skill catalog status"},
-		{name: "oversized", data: strings.Repeat("x", MaxCatalogBytes+1), wantErr: "exceeds 1 MiB"},
+		{name: "oversized", data: strings.Repeat("x", MaxCatalogBytes+1), wantErr: "exceeds 4 MiB"},
 		{
 			name:    "tampered name",
 			data:    `{"version":1,"status":"available","skills":[{"name":"../x","description":"d","body":"b"}]}`,

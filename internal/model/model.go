@@ -354,15 +354,18 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 			CacheReadInputTokens:     msg.Usage.CacheReadInputTokens,
 		}
 		usage.add(reported)
-		var blockSearches int64
+		// Count searches that ran, not requests: a search requested next to a
+		// repository call only runs at the start of the next request, where
+		// the provider counts it against that request's max_uses.
+		var ranSearches int64
 		for _, block := range msg.Content {
-			if block.Type == "server_tool_use" && block.Name == "web_search" {
-				blockSearches++
+			if block.Type == "web_search_tool_result" && !webSearchFailed(block) {
+				ranSearches++
 			}
 		}
 		// Usage is authoritative when higher, but partial streams may only
-		// report tool blocks. Do not count the same search twice.
-		messageSearches := max(blockSearches, msg.Usage.ServerToolUse.WebSearchRequests)
+		// report result blocks. Do not count the same search twice.
+		messageSearches := max(ranSearches, msg.Usage.ServerToolUse.WebSearchRequests)
 		searches += messageSearches
 		budgetErr := budget.record(reported, messageSearches)
 		if err != nil {
@@ -387,18 +390,9 @@ func (c *client) Complete(ctx context.Context, req Request) (result Result, err 
 				}
 				log.WebStart(block.Input)
 			case "web_search_tool_result":
+				// A failed search is logged and handed back to the model, which
+				// can carry on with what it already knows.
 				log.WebEnd(block.RawJSON())
-				var result struct {
-					Content struct {
-						Type      string `json:"type"`
-						ErrorCode string `json:"error_code"`
-					} `json:"content"`
-				}
-				// Successful search results have array content, not an error object.
-				if json.Unmarshal([]byte(block.RawJSON()), &result) == nil &&
-					result.Content.Type == "web_search_tool_result_error" {
-					return Result{}, &IncompleteError{Reason: "web search failed: " + result.Content.ErrorCode}
-				}
 			case "tool_use":
 				if msg.StopReason != anthropic.StopReasonToolUse {
 					return Result{}, &IncompleteError{Reason: "tool request without tool_use stop reason"}
@@ -490,6 +484,18 @@ const (
 
 // appendFinalInstruction adds the closing instruction to the pending tool
 // results, or as its own user message after an assistant turn.
+// webSearchFailed reports whether a web search result block is an error;
+// successful results carry an array, not an error object.
+func webSearchFailed(block anthropic.ContentBlockUnion) bool {
+	var result struct {
+		Content struct {
+			Type string `json:"type"`
+		} `json:"content"`
+	}
+	return json.Unmarshal([]byte(block.RawJSON()), &result) == nil &&
+		result.Content.Type == "web_search_tool_result_error"
+}
+
 func appendFinalInstruction(messages []anthropic.MessageParam) []anthropic.MessageParam {
 	text := anthropic.NewTextBlock(finalInstruction)
 	last := &messages[len(messages)-1]

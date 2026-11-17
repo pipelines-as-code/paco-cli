@@ -1,6 +1,9 @@
 package review
 
 import (
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -61,4 +64,32 @@ func TestRenderSkills(t *testing.T) {
 	assert.Assert(t, strings.Contains(requested, "- beta: Second skill"))
 	assert.Assert(t, strings.Contains(requested, "load_skill"))
 	assert.Assert(t, strings.Index(requested, "BEGIN TRUSTED SKILL alpha") < strings.Index(requested, "- beta:"))
+}
+
+// The sample PipelineRun must start a run for malformed skill names so the
+// review can report them instead of ignoring the comment.
+func TestPipelineRunCommentPatternReachesParseTrigger(t *testing.T) {
+	data, err := os.ReadFile("../../tekton/paco.pipelinerun.yaml")
+	assert.NilError(t, err)
+	var pattern string
+	for _, line := range strings.Split(string(data), "\n") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "pipelinesascode.tekton.dev/on-comment:"); ok {
+			pattern, err = strconv.Unquote(strings.TrimSpace(value))
+			assert.NilError(t, err)
+		}
+	}
+	re, err := regexp.Compile(pattern)
+	assert.NilError(t, err)
+	for _, comment := range []string{
+		"/paco review",
+		"/paco summary skill:alpha skill:beta",
+		"/paco review skill:Bad_Name",
+		"/paco review skill:",
+		"/paco review skill:a skill:b skill:c skill:d",
+	} {
+		assert.Assert(t, re.MatchString(comment), comment)
+	}
+	for _, comment := range []string{"/paco", "/paco reviewer", "/paco review please", "/paco review skill:a extra"} {
+		assert.Assert(t, !re.MatchString(comment), comment)
+	}
 }

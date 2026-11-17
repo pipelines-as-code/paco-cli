@@ -229,10 +229,11 @@ func Decode(data []byte, secrets ...string) (*Catalog, error) {
 		catalog.Skills[i].Body = security.Scrub(s.Body, secrets...)
 		catalog.Skills[i].Description = security.Scrub(s.Description, secrets...)
 	}
-	for _, problem := range catalog.Invalid {
+	for i, problem := range catalog.Invalid {
 		if problem.Name == "" || problem.Reason == "" {
 			return nil, errors.New("invalid skill catalog entry")
 		}
+		catalog.Invalid[i] = Problem{Name: security.Scrub(problem.Name, secrets...), Reason: security.Scrub(problem.Reason, secrets...)}
 	}
 	catalog.Ref = security.Scrub(catalog.Ref, secrets...)
 	catalog.Reason = security.Scrub(catalog.Reason, secrets...)

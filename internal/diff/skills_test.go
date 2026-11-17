@@ -142,6 +142,20 @@ func TestCollectSkillsLimits(t *testing.T) {
 	assert.Equal(t, invalid["skill-21"], "too many skills")
 }
 
+func TestCollectSkillsReportsMissingFile(t *testing.T) {
+	f, c := newFakeGitHub(t)
+	happyPath(f, simpleDiff)
+	contextRefs(f, simpleDiff)
+	serveSkills(t, f, "def456", []string{"empty", "good"}, map[string]string{
+		"good": skillFile("good", "Desc", "body"),
+	})
+
+	ws := runCollection(t, f, c)
+	catalog := readCatalog(t, ws)
+	assert.Equal(t, len(catalog.Skills), 1)
+	assert.DeepEqual(t, catalog.Invalid, []skill.Problem{{Name: "empty", Reason: "SKILL.md is missing"}})
+}
+
 func TestCollectSkillsSkipsBadDirectoryNames(t *testing.T) {
 	f, c := newFakeGitHub(t)
 	happyPath(f, simpleDiff)

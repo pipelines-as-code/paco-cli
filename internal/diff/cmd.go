@@ -365,6 +365,10 @@ func fetchSkills(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, b
 				continue
 			}
 			content, err := gh.FileContent(ctx, repo, path.Join(skill.Dir, name, skill.FileName), baseBranch)
+			if ghclient.IsNotFound(err) {
+				catalog.Invalid = append(catalog.Invalid, skill.Problem{Name: name, Reason: skill.FileName + " is missing"})
+				continue
+			}
 			if err != nil {
 				catalog.Invalid = append(catalog.Invalid, skill.Problem{Name: name, Reason: security.Scrub(err.Error(), gh.Token())})
 				continue

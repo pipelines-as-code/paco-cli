@@ -90,6 +90,7 @@ instead of failing `diff`, when:
 
 - the directory name is not lowercase letters, digits and single hyphens
   (64 bytes max)
+- the directory has no `SKILL.md`, or it cannot be read
 - the file is over 12 KiB, not UTF-8, or holds a NUL byte or a PEM
   private key
 - the frontmatter is missing or unclosed, lacks `name` or `description`,

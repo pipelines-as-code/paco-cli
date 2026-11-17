@@ -393,6 +393,13 @@ func fetchSkills(ctx context.Context, gh *ghclient.Client, repo ghclient.Repo, b
 		fmt.Printf("Skipping invalid skill %s: %s\n", problem.Name, problem.Reason)
 	}
 	encoded, err := json.Marshal(catalog)
+	if err == nil && len(encoded) > skill.MaxCatalogBytes {
+		catalog = skill.Catalog{
+			Version: 1, Ref: baseBranch, Status: skill.StatusUnavailable,
+			Reason: "skill catalog exceeds 4 MiB", Skills: []skill.Skill{}, Invalid: []skill.Problem{},
+		}
+		encoded, err = json.Marshal(catalog)
+	}
 	if err != nil {
 		fmt.Printf("Warning: could not encode skills: %v\n", err)
 		return

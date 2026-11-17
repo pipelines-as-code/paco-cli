@@ -23,8 +23,10 @@ const (
 	MaxRequested        = 3
 	MaxDescriptionBytes = 1024
 	// Keeps a load_skill result under the model's tool result limit.
-	MaxFileBytes    = 12 << 10
-	MaxCatalogBytes = 1 << 20
+	MaxFileBytes = 12 << 10
+	// JSON escaping can turn one byte into six (\u003c), so a catalog of
+	// MaxSkills full skills needs about 1.6 MB.
+	MaxCatalogBytes = 4 << 20
 
 	MaxNameBytes = 64
 
@@ -188,7 +190,7 @@ func Parse(dir string, data []byte) (Skill, error) {
 // load_skill can return.
 func Decode(data []byte, secrets ...string) (*Catalog, error) {
 	if len(data) > MaxCatalogBytes {
-		return nil, errors.New("skill catalog exceeds 1 MiB")
+		return nil, errors.New("skill catalog exceeds 4 MiB")
 	}
 	var catalog Catalog
 	if err := json.Unmarshal(data, &catalog); err != nil {

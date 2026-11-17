@@ -173,10 +173,11 @@ func TestDecode(t *testing.T) {
 		},
 		{
 			name: "secrets are scrubbed",
-			data: `{"version":1,"status":"available","ref":"main","skills":[{"name":"demo","description":"for literal-secret","body":"use literal-secret"}]}`,
+			data: `{"version":1,"status":"available","ref":"main","skills":[{"name":"demo","description":"for literal-secret","body":"use literal-secret"}],"invalid":[{"name":"bad","reason":"saw literal-secret"}]}`,
 			check: func(t *testing.T, c *Catalog) {
 				assert.Assert(t, !strings.Contains(c.Skills[0].Body, "literal-secret"))
 				assert.Assert(t, !strings.Contains(c.Skills[0].Description, "literal-secret"))
+				assert.Assert(t, !strings.Contains(c.Invalid[0].Reason, "literal-secret"))
 			},
 		},
 	}
